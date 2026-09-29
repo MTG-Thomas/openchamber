@@ -2488,6 +2488,8 @@ async function main(options = {}) {
     globalEventHub: globalMessageStreamHub,
     permissionAutoAcceptRuntime,
     worktreeBootstrapStore,
+    globalMessageStreamHub,
+    setSessionStatus: (...args) => sessionRuntime.setSessionStatus(...args),
     messageQueueRuntime,
     routingRuntime,
   });

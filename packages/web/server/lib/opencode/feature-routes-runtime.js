@@ -10,6 +10,8 @@ import { registerGuestRoutes } from '../guests/routes.js';
 import { registerBuiltInGuests } from '../guests/catalog.js';
 import { extensionsPersistPath } from '../guests/persist.js';
 import { registerGitRoutes } from '../git/routes.js';
+import { registerAcpRoutes, initAcpOnStartup, knownAcpSessionIds, getAcpSessionMessages } from '../acp/routes.js';
+import { isAcpEnabled } from '../acp/env.js';
 import { registerDevServerRoutes } from '../dev-servers/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
@@ -236,6 +238,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       routingRuntime,
       globalEventHub,
       openchamberVersion,
+      globalMessageStreamHub,
+      setSessionStatus,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -656,6 +660,48 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       },
     });
     registerLinearRoutes(app);
+    // ACP backend (opt-in, gated by OPENCHAMBER_ACP_ENABLED; OpenCode default).
+    if (isAcpEnabled()) {
+      // When ACP is enabled, intercept session-by-ID requests for KNOWN ACP
+      // sessions; they would otherwise hit the OpenCode proxy (which 500s for
+      // foreign session IDs). IDs are registered in knownAcpSessionIds on
+      // create/list, so OpenCode sessions fall through untouched. For message
+      // requests, fetch the actual history from the ACP agent and return it in
+      // the OpenCode format so the existing UI pipeline renders it unchanged.
+      app.use('/api', async (req, res, next) => {
+        const match = req.path?.match(/^\/session\/([A-Za-z0-9-]+)/);
+        if (!match) return next();
+        const sessionId = match[1];
+        if (!knownAcpSessionIds.has(sessionId)) return next();
+
+        if (req.path?.includes('/message')) {
+          // Return the session's message history from the ACP agent.
+          try {
+            const messages = await getAcpSessionMessages(sessionId);
+            console.log('[acp] safety-net /session/' + sessionId + '/message -> ' + messages.length + ' messages');
+            return res.status(200).json({ data: messages, cursor: {} });
+          } catch (error) {
+            console.warn('[acp] safety-net /session/' + sessionId + '/message ERROR: ' + (error?.message ?? error));
+            return res.status(200).json({ data: [], cursor: {} });
+          }
+        }
+
+        // session.get — return a minimal 2.x session record.
+        return res.status(200).json({
+          data: {
+            id: sessionId,
+            projectID: '',
+            directory: '',
+            title: 'ACP session',
+            time: { created: Date.now(), updated: Date.now() },
+          },
+        });
+      });
+      registerAcpRoutes(app, { globalMessageStreamHub, setSessionStatus });
+      // Initialize the agent at startup if config is available. Fire-and-forget
+      // so route registration isn't blocked while the agent spawns.
+      void initAcpOnStartup(globalMessageStreamHub, setSessionStatus);
+    }
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     registerMagicPromptRoutes(app, {
       fsPromises,

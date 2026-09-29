@@ -462,6 +462,12 @@ export const createSessionRuntime = ({ writeSseEvent, getNotificationClients, br
 
   return {
     processOpenCodeSsePayload,
+    /**
+     * Set a session's activity status directly, for backends whose turns do
+     * not travel through OpenCode's event stream (ACP). Emits the same
+     * `openchamber:session-status` frame and feeds the same snapshot.
+     */
+    setSessionStatus: (sessionId, status, metadata) => updateSessionState(sessionId, status, undefined, metadata),
     getSessionActivitySnapshot,
     getActiveSessionCount,
     getSessionStateSnapshot,

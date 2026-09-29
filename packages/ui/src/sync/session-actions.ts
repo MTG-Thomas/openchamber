@@ -12,9 +12,14 @@ import { useSessionUIStore } from "./session-ui-store"
 import { useInputStore } from "./input-store"
 import type { ChildStoreManager } from "./child-store"
 import { computeSubtreeIds } from "./scoped-blocking-requests"
+import { toast } from "@/components/ui"
+import { useAgentBackendStore } from "@/stores/useAgentBackendStore"
 import { opencodeClient, type SyntheticContextInput } from "@/lib/opencode/client"
 import { toJsonRecord } from "@/lib/opencode/json"
 import { ascendingId } from "@/lib/opencode/ids"
+import { getActiveAgentClient } from "@/lib/agent/active-client"
+import { isAcpSession } from "@/lib/agent/is-acp-session"
+import { ACP_SESSION_METADATA, ZERO_TOKEN_USAGE } from "@/lib/agent/types"
 import { mergeSessionDirectoryMetadata, resolveGlobalSessionDirectory, useGlobalSessionsStore } from "@/stores/useGlobalSessionsStore"
 import { useConfigStore } from "@/stores/useConfigStore"
 import { registerSessionDirectory } from "./sync-refs"
@@ -220,7 +225,8 @@ function updateLiveSession(session: Session, directory?: string): boolean {
   return false
 }
 
-function mirrorSessionIntoLiveStores(session: Session, directory?: string): void {
+/** Exported for the ACP session bootstrap, which mirrors agent sessions into live stores. */
+export function mirrorSessionIntoLiveStores(session: Session, directory?: string): void {
   if (directory && updateLiveSession(session, directory)) {
     return
   }
@@ -984,7 +990,7 @@ export async function createSession(
     // opencodeClient.getDirectory() value and group the session under the
     // wrong project (closes #1637, #2270).
     const effectiveDirectory = directoryOverride ?? dir()
-    const session = await opencodeClient.createSession(
+    const session = await getActiveAgentClient().createSession(
       { title, metadata, model: selection?.model, agent: selection?.agent },
       effectiveDirectory,
     )
@@ -1009,11 +1015,60 @@ export async function createSession(
     if (navigation === "open") useSessionUIStore.getState().setCurrentSession(session.id, sessionDirectory, selectionTransition)
     useSessionUIStore.getState().markSessionAsOpenChamberCreated(session.id)
     useGlobalSessionsStore.getState().upsertSession(session)
+
+    // When the ACP backend is active, populate the sidebar with the agent's
+    // existing sessions (returned by /initialize alongside the new session).
+    if (useAgentBackendStore.getState().activeBackend === "acp") {
+      try {
+        const client = getActiveAgentClient();
+        // SAFETY: only AcpClient exposes initSessions; the cast reads the
+        // optional sidebar payload without changing routing behavior.
+        const acpClient = client as { initSessions?: Array<{ id: string; title?: string }> };
+        if (acpClient.initSessions) {
+          const now = Date.now();
+          for (const s of acpClient.initSessions) {
+            if (s.id === session.id) continue;
+            const acpSession: Session = {
+              id: s.id,
+              projectID: "",
+              directory: sessionDirectory ?? "",
+              title: s.title ?? "ACP session",
+              cost: 0,
+              tokens: ZERO_TOKEN_USAGE,
+              time: { created: now, updated: now },
+              metadata: ACP_SESSION_METADATA,
+            };
+            useGlobalSessionsStore.getState().upsertSession(acpSession);
+            mirrorSessionIntoLiveStores(acpSession, sessionDirectory ?? undefined);
+          }
+        }
+      } catch {
+        // Best-effort sidebar population.
+      }
+    }
+
     return session
   } catch (error) {
     console.error("[session-actions] createSession failed", error)
+    // FR-6: surface ACP backend failures visibly (never silently swallow).
+    if (useAgentBackendStore.getState().activeBackend === "acp") {
+      const message = error instanceof Error && error.message ? error.message : "ACP session failed to start"
+      lastAcpCreateErrorMessage = message
+      toast.error(message)
+    }
     return null
   }
+}
+
+/**
+ * The ACP reason from the last failed createSession, consumed by the send path
+ * so it does not stack a second, generic toast over the useful one.
+ */
+let lastAcpCreateErrorMessage: string | null = null
+export const consumeLastAcpCreateErrorMessage = (): string | null => {
+  const message = lastAcpCreateErrorMessage
+  lastAcpCreateErrorMessage = null
+  return message
 }
 
 /**
@@ -1067,6 +1122,7 @@ export async function patchSessionMetadata(
   updater: (metadata: SessionMetadataRecord) => SessionMetadataRecord,
   expectedRuntimeKey?: string,
 ): Promise<Session> {
+  if (isAcpSession(sessionId)) throw new Error("patchSessionMetadata is not supported for ACP sessions")
   if (isStaleRuntime(expectedRuntimeKey)) throw new Error("runtime changed")
   const targetDirectory = directory ?? getSessionDirectory(sessionId)
   const current = await opencodeClient.getSession(sessionId, targetDirectory)
@@ -1425,6 +1481,7 @@ export type DeleteSessionOptions = {
  * failure and leaves reconciliation to the next authoritative load.
  */
 export async function deleteSession(sessionId: string, options?: DeleteSessionOptions): Promise<boolean> {
+  if (isAcpSession(sessionId)) return false
   const expectedRuntimeKey = options?.expectedRuntimeKey ?? getRuntimeKey()
   if (isStaleRuntime(expectedRuntimeKey)) return false
   const sessionDirectory = getSessionDirectory(sessionId)
@@ -1449,6 +1506,38 @@ export async function deleteSession(sessionId: string, options?: DeleteSessionOp
     if ((error as { status?: number })?.status === 404) {
       if (isStaleRuntime(expectedRuntimeKey)) return false
       finalizeConfirmedSessionDeletion(sessionId, sessionDirectory, expectedRuntimeKey)
+      await cleanupDeletedChatDirectory(chatDirectoryCleanup)
+      return true
+    }
+    return false
+  }
+}
+
+/** Delete a session specifying which directory it lives in. Used by agent groups for cross-directory deletes. */
+export async function deleteSessionInDirectory(
+  sessionId: string,
+  directory: string,
+  expectedRuntimeKey = getRuntimeKey(),
+): Promise<boolean> {
+  if (isAcpSession(sessionId)) return false
+  if (isStaleRuntime(expectedRuntimeKey)) return false
+  const chatDirectoryCleanup = planChatDirectoryCleanup(sessionId, getGlobalSessionSnapshot(sessionId), directory)
+  try {
+    await cleanupReviewMetadataBeforeDelete(sessionId, directory, expectedRuntimeKey)
+    if (isStaleRuntime(expectedRuntimeKey)) return false
+    const deleted = await opencodeClient.deleteSession(sessionId, directory)
+    if (isStaleRuntime(expectedRuntimeKey)) return false
+    if (deleted !== true) {
+      throw new Error("session.delete failed: server did not confirm deletion")
+    }
+    finalizeConfirmedSessionDeletion(sessionId, directory, expectedRuntimeKey)
+    await cleanupDeletedChatDirectory(chatDirectoryCleanup)
+    return true
+  } catch (error) {
+    console.error("[session-actions] deleteSessionInDirectory failed", error)
+    if ((error as { status?: number })?.status === 404) {
+      if (isStaleRuntime(expectedRuntimeKey)) return false
+      finalizeConfirmedSessionDeletion(sessionId, directory, expectedRuntimeKey)
       await cleanupDeletedChatDirectory(chatDirectoryCleanup)
       return true
     }
@@ -1506,6 +1595,7 @@ export async function deleteSessions(
  * the runtime is loaded.
  */
 export async function archiveSession(sessionId: string, expectedRuntimeKey = getRuntimeKey()): Promise<boolean> {
+  if (isAcpSession(sessionId)) return false
   if (isStaleRuntime(expectedRuntimeKey)) return false
   const sessionDirectory = getSessionDirectory(sessionId)
   const archivedAt = Date.now()
@@ -1937,7 +2027,11 @@ export async function optimisticSend(input: {
   }
 
   assertRuntimeUnchanged()
-  await waitForConnectionOrThrow()
+  // The OpenCode connection gate must not block ACP prompts: the ACP backend
+  // owns its transport and surfaces its own failures (FR-6 isolation).
+  if (useAgentBackendStore.getState().activeBackend !== "acp") {
+    await waitForConnectionOrThrow()
+  }
   input.beforeOptimisticInsert?.()
   assertRuntimeUnchanged()
   input.appendSubmissions?.()
@@ -2193,6 +2287,16 @@ function materializeConfirmedSendRecords(
 // ---------------------------------------------------------------------------
 
 export async function abortCurrentOperation(sessionId: string): Promise<void> {
+  if (isAcpSession(sessionId)) {
+    // ACP turns run over the ACP connection, not OpenCode, so the OpenCode
+    // abort would cancel nothing. Route the stop to the active agent client.
+    try {
+      await getActiveAgentClient().abortSession(sessionId)
+    } catch (error) {
+      console.error("[session-actions] ACP abort failed", error)
+    }
+    return
+  }
   // The abort must carry the SESSION'S directory, not the active UI directory:
   // OpenCode routes the request to the per-directory instance, and an abort
   // sent to the wrong instance cancels nothing while still returning 200 true
@@ -2217,6 +2321,13 @@ export async function respondToPermission(
   directoryOverride?: string,
 ): Promise<void> {
   await waitForConnectionOrThrow()
+  if (isAcpSession(sessionId)) {
+    // ACP permissions travel over the ACP connection, not OpenCode.
+    if (await getActiveAgentClient().replyToPermission?.(sessionId, requestId, response) !== true) {
+      throw new Error("Permission reply failed")
+    }
+    return
+  }
   const directory = directoryOverride
     || resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
@@ -2231,6 +2342,14 @@ export async function dismissPermission(
   requestId: string,
 ): Promise<void> {
   await waitForConnectionOrThrow()
+  if (isAcpSession(sessionId)) {
+    // ACP permissions travel over the ACP connection, not OpenCode. A request
+    // already resolved by the agent is treated as dismissed by the client.
+    if (await getActiveAgentClient().replyToPermission?.(sessionId, requestId, "reject") !== true) {
+      throw new Error("Permission dismissal failed")
+    }
+    return
+  }
   const directory = resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
@@ -2441,6 +2560,7 @@ export async function dismissOpenFormsForSession(sessionId: string): Promise<boo
  * 5. Set pendingInputText so the reverted message text appears in the input
  */
 export async function revertToMessage(sessionId: string, messageId: string): Promise<void> {
+  if (isAcpSession(sessionId)) return
   const { store, directory } = dirStoreForSession(sessionId)
   const state = store.getState()
 
@@ -2569,6 +2689,7 @@ export async function revertToMessage(sessionId: string, messageId: string): Pro
 }
 
 export async function refetchSessionMessages(sessionId: string): Promise<void> {
+  if (isAcpSession(sessionId)) return
   const { store, directory } = dirStoreForSession(sessionId)
   const loader = getImperativeSessionMessageLoader()
   if (loader && directory) {

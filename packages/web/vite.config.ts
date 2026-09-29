@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -8,6 +9,15 @@ import { themeStoragePlugin } from '../../vite-theme-plugin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
+// Vite blocks dev requests whose Host header it does not recognise (DNS
+// rebinding protection). Allow this machine's own names so the dev server is
+// reachable over the LAN, and let OPENCHAMBER_HMR_ALLOWED_HOSTS add more.
+const devHostname = os.hostname();
+const extraAllowedDevHosts = (process.env.OPENCHAMBER_HMR_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((host) => host.trim())
+  .filter(Boolean);
+const allowedDevHosts = ['localhost', devHostname, `${devHostname}.local`, ...extraAllowedDevHosts];
 const pwaDevEnabled = process.env.OPENCHAMBER_DISABLE_PWA_DEV !== '1';
 const reactScanToggle = (process.env.VITE_ENABLE_REACT_SCAN ?? '').toLowerCase();
 const enableReactScan = reactScanToggle === '1' || reactScanToggle === 'true' || reactScanToggle === 'on' || reactScanToggle === 'yes';
@@ -107,6 +117,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    allowedHosts: allowedDevHosts,
     proxy: {
       '/auth': {
         target: `http://127.0.0.1:${process.env.OPENCHAMBER_PORT || 3001}`,

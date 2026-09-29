@@ -231,6 +231,20 @@ export function createGlobalMessageStreamHub({
     flushPending() {
       coalescer.flush();
     },
+    // Inject a synthetic normalized event into the same fan-out as upstream
+    // OpenCode events. Used by the ACP event source to publish translated
+    // session/update notifications to all browser WS subscribers. Additive:
+    // does not touch the upstream OpenCode reader or its replay buffer.
+    publishEvent(payload, { directory: directoryArg } = {}) {
+      if (!payload || typeof payload !== 'object') return;
+      const directory =
+        typeof directoryArg === 'string' && directoryArg.length > 0 ? directoryArg : 'global';
+      const eventId = `acp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const normalized = normalizeEvent({ envelope: { directory, eventId }, payload });
+      for (const subscriber of Array.from(eventSubscribers)) {
+        notifySubscriber('event', subscriber, normalized);
+      }
+    },
     replayAfter(eventId) {
       if (!eventId) {
         return [];

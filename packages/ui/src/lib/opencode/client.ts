@@ -1,3 +1,4 @@
+import type { AgentClient, AgentCapabilities } from "../agent/types";
 /**
  * OpenCode client wrapper.
  *
@@ -528,7 +529,8 @@ const dedupeById = <T extends { id: string }>(lists: T[][]): T[] => {
 // Service
 // ---------------------------------------------------------------------------
 
-class OpencodeService {
+class OpencodeService implements AgentClient {
+  readonly backend = "opencode" as const
   private client: OpenCodeClient
   private baseUrl: string
   private scopedClients: Map<string, OpenCodeClient> = new Map()
@@ -1132,8 +1134,12 @@ class OpencodeService {
     model?: ModelRef
     /** Switch the session to this agent before sending; omit when unchanged. */
     agent?: string
-    /** Provider the prompt will run on, for the provider circuit breaker. */
-    providerID: string
+    /**
+     * Provider the prompt will run on, for the provider circuit breaker.
+     * Optional because non-OpenCode backends (ACP) have no provider; the
+     * circuit breaker is skipped for them.
+     */
+    providerID?: string
     text: string
     files?: Array<FileInputLite>
     /**
@@ -1169,7 +1175,7 @@ class OpencodeService {
       throw new Error("Message must have at least one part (text or file)")
     }
 
-    assertProviderCircuitClosed(params.providerID)
+    assertProviderCircuitClosed(params.providerID ?? "")
 
     const admitSynthetic = async (item: SyntheticContextInput) => {
       this.assertRuntimeUnchanged(params.runtimeKey)
@@ -1224,13 +1230,13 @@ class OpencodeService {
       // Do not retry a prompt after a transport failure: through a remote
       // tunnel the POST may already be running server-side even though the
       // client lost the response.
-      if (!(error instanceof Error && isDefiniteTransportFailure(error))) {
+      if (params.providerID && !(error instanceof Error && isDefiniteTransportFailure(error))) {
         recordProviderError(params.providerID, error instanceof OpencodeApiError ? error.status : undefined)
       }
       throw error
     }
 
-    recordProviderSuccess(params.providerID)
+    if (params.providerID) recordProviderSuccess(params.providerID)
     return messageId
   }
 
@@ -1336,6 +1342,10 @@ class OpencodeService {
   /** Compacts the transcript; the result arrives as a compaction message through events. */
   async compactSession(sessionId: string, directory?: string | null): Promise<void> {
     await call("session.compact", () => this.clientFor(directory).session.compact({ sessionID: sessionId }))
+  }
+
+  capabilities(): AgentCapabilities {
+    return { canCancel: true };
   }
 
   /**

@@ -39,6 +39,7 @@ import { MagicPromptsPage } from '@/components/sections/magic-prompts/MagicPromp
 import { SnippetsSidebar } from '@/components/sections/snippets/SnippetsSidebar';
 import { SnippetsPage } from '@/components/sections/snippets/SnippetsPage';
 import { GitPage } from '@/components/sections/git-identities/GitPage';
+import { AgentBackendPage } from '@/components/sections/agent-backend/AgentBackendPage';
 import { IntegrationsPage } from '@/components/sections/integrations/IntegrationsPage';
 import { RoutingPage } from '@/components/sections/routing/RoutingPage';
 import { ExtensionsPage } from '@/components/sections/extensions/ExtensionsPage';
@@ -121,6 +122,7 @@ const pageOrder: SettingsPageSlug[] = [
   'git',
   'isolated-spaces',
   // 'opencode' group — OpenCode
+  'agent-backend',
   'providers',
   'web-search',
   'agents',
@@ -351,6 +353,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.skills.title');
       case 'skills.catalog':
         return t('settings.page.skillsCatalog.title');
+      case 'agent-backend':
+        return t('settings.page.agentBackend.title');
       case 'git':
         return t('settings.page.git.title');
       case 'integrations':
@@ -674,6 +678,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <SkillsPage view="installed" />;
       case 'skills.catalog':
         return <SkillsPage view="catalog" />;
+      case 'agent-backend':
+        return <AgentBackendPage />;
       case 'providers':
         return <ProvidersPage />;
       case 'web-search':

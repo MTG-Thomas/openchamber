@@ -1240,6 +1240,13 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'agent-backend.backend',
+    page: 'agent-backend',
+    titleKey: 'settings.agentBackend.section.backend',
+    descriptionKey: 'settings.agentBackend.section.backend.description',
+    keywords: ['agent', 'acp', 'agent client protocol', 'backend', 'opencode', 'stdio', 'claude', 'gemini'],
+  },
+  {
     id: 'shortcuts.keyboard-shortcuts',
     page: 'shortcuts',
     titleKey: 'settings.openchamber.keyboardShortcuts.title',
