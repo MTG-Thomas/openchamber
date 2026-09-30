@@ -2511,6 +2511,7 @@ export const settingsDict = {
   'settings.agentBackend.field.command.placeholder': 'örn. claude-code',
   'settings.agentBackend.field.enabled': 'Etkin',
   'settings.agentBackend.empty': 'Henüz yapılandırılmış ACP ajanı yok.',
+  'settings.agentBackend.unavailable': 'ACP bu sunucuda etkin değil (OPENCHAMBER_ACP_ENABLED). Bunun yerine OpenCode kullanılıyor; ACP ajan seçiminiz korunuyor.',
   ...guestIntegrationsI18n.tr,
   ...extensionsSettingsI18n.tr,
   'settings.magicPrompts.page.block.codeFusionInstructions': 'Kod fusion talimatları',

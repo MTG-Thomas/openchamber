@@ -36,6 +36,13 @@ import { isAcpDebug } from './env.js';
  *   SDK's method-not-found, which the agent would treat as a protocol error.
  */
 
+/** Turn a child-process spawn failure into an error the UI can show as-is. */
+const describeSpawnError = (error, command) => {
+  if (error?.code === 'ENOENT') return new Error(`ACP agent command not found: ${command}`, { cause: error });
+  if (error?.code === 'EACCES') return new Error(`ACP agent command is not executable: ${command}`, { cause: error });
+  return new Error(`Failed to start ACP agent ${command}: ${error?.message ?? error}`, { cause: error });
+};
+
 export class AcpAgentConnection {
   /**
    * @param {AcpAgentConnectionOptions} options
@@ -94,8 +101,19 @@ export class AcpAgentConnection {
     }
     this._lastStderr = () => stderrBuf;
 
+    // A failed spawn (e.g. ENOENT) surfaces as a child 'error' event. Some
+    // runtimes (Bun) also abort the stdio streams first, which would reject the
+    // handshake with a bare "operation was aborted" and hide the real cause, so
+    // the spawn failure is recorded and preferred when the handshake fails.
+    let spawnFailure = null;
+    const spawnFailed = new Promise((resolve) => {
+      child.once('error', (error) => {
+        spawnFailure = describeSpawnError(error, command);
+        resolve(spawnFailure);
+      });
+    });
     const spawnError = new Promise((resolve, reject) => {
-      child.once('error', reject);
+      void spawnFailed.then(reject);
       child.once('exit', (code, signal) => {
         if (this._resolveInit) {
           // Exited before initialize completed → handshake failed.
@@ -182,11 +200,17 @@ export class AcpAgentConnection {
     try {
       await Promise.race([this._initializedPromise, spawnError, handshakeTimeout]);
     } catch (error) {
+      // No pid means the spawn itself failed; its 'error' event may land after
+      // the stream abort that rejected the race, so wait for it (it is sync-near).
+      if (!spawnFailure && !Number.isInteger(child.pid)) {
+        await Promise.race([spawnFailed, new Promise((resolve) => setTimeout(resolve, 1000))]);
+      }
+      const cause = spawnFailure ?? error;
       // Mark the init as settled so the pending request rejects with this
       // reason instead of waiting forever, then tear the child down.
-      if (this._rejectInit) this._rejectInit(error);
+      if (this._rejectInit) this._rejectInit(cause);
       await this.stop().catch(() => {});
-      throw error;
+      throw cause;
     } finally {
       clearTimeout(handshakeTimer);
     }

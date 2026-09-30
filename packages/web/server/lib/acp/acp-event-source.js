@@ -85,6 +85,36 @@ const extractPreambleFingerprint = (session) => {
   return null;
 };
 
+// Minimal async queue for the updates of a turn this source drives itself (a
+// prompt for a session other than the one session/new created), mirroring the
+// SDK ActiveSession's `nextUpdate()` contract.
+class UpdateQueue {
+  constructor() {
+    this._items = [];
+    this._waiters = [];
+  }
+
+  _deliver(entry) {
+    const waiter = this._waiters.shift();
+    if (waiter) {
+      if (entry.error) waiter.reject(entry.error);
+      else waiter.resolve(entry.value);
+    } else {
+      this._items.push(entry);
+    }
+  }
+
+  push(value) { this._deliver({ value }); }
+
+  fail(error) { this._deliver({ error }); }
+
+  next() {
+    const entry = this._items.shift();
+    if (entry) return entry.error ? Promise.reject(entry.error) : Promise.resolve(entry.value);
+    return new Promise((resolve, reject) => { this._waiters.push({ resolve, reject }); });
+  }
+}
+
 /**
  * @typedef {Object} AcpEventSourceOptions
  * @property {object} hub                       Global message-stream hub (publishEvent).
@@ -95,6 +125,8 @@ const extractPreambleFingerprint = (session) => {
  * @property {Record<string,string>} [env]      Agent env.
  * @property {string} [cwd]                     Session cwd.
  * @property {string} [clientName="openchamber"]
+ * @property {(sessionId: string) => (string | undefined)} [resolveSessionDirectory]
+ *   Directory a session runs in; used to tag turns and to switch the agent to it.
  */
 
 export class AcpEventSource {
@@ -111,6 +143,22 @@ export class AcpEventSource {
     this._acc = { messageID: null, fullText: "" };
     this._promptAbort = null;
     this._prompting = false;
+    // The session the agent is currently on: the one session/new created, then
+    // whatever the last session/load (history read) or switch moved it to. Null
+    // when a switch failed midway and the agent's state is unknown.
+    this._current = null;
+    // False once updates for this.sessionID may have reached the SDK
+    // ActiveSession queue without being read by it (a switched turn or a
+    // replay), after which that queue is never used again.
+    this._sdkQueueClean = true;
+    // Sink for the updates of a turn this source drives itself.
+    this._turnQueue = null;
+    this._turnSessionId = null;
+    // Serializes session switches and history loads: the connection has one
+    // session context, so their replay state must never interleave.
+    this._exclusiveTail = Promise.resolve();
+    // Directory events of the running turn are published under.
+    this._turnDirectory = null;
     // Pending agent→client permission requests, keyed by the request id sent
     // to the UI. Each entry holds the resolver the route calls on reply.
     this._pendingPermissions = new Map();
@@ -148,6 +196,15 @@ export class AcpEventSource {
    */
   isPrompting() {
     return this._prompting;
+  }
+
+  /**
+   * True while the connection is busy with a turn or a history replay. Both
+   * need the agent's single session context, so callers skip optional agent
+   * requests (session/list refreshes) until it is free.
+   */
+  isBusy() {
+    return this._prompting || this._loadingSessionId != null;
   }
 
   /** Session configuration options the agent reported (models, thinking, ...). */
@@ -252,6 +309,7 @@ export class AcpEventSource {
         await builder.withSession(async (session) => {
           this._session = session;
           this.sessionID = session.sessionId;
+          this._current = session.sessionId;
           // Try to capture a model label for the message footer from the session
           // modes/meta (agents report it in different places; best-effort).
           this._modelLabel = extractModelLabel(session);
@@ -302,19 +360,26 @@ export class AcpEventSource {
     if (!this._session) {
       throw new Error('ACP event source has no active session');
     }
+    // One turn at a time, reserved before any await so two callers cannot both
+    // get past the check.
+    if (this._prompting) {
+      throw new Error('An ACP turn is already running for this session');
+    }
+    this._prompting = true;
+    const dir = this.options.resolveSessionDirectory?.(tag) ?? this.options.directory;
+    this._turnDirectory = dir;
     // Permission requests raised during this turn are tagged to this session.
     this._activeTag = tag;
 
     // Reset the per-turn accumulator so a new assistant message is started.
     this._acc = { messageID: null, fullText: '' };
     this._promptAbort = new AbortController();
-    this._prompting = true;
     const ctx = () => ({
       sessionID: tag,
       agentName: this._agentLabel,
       modelLabel: this._modelLabel,
       preambleFingerprint: this._preambleFingerprint,
-      location: this.options.directory,
+      location: dir,
     });
 
     // Turn start: the session goes busy. The user message is echoed as an
@@ -323,7 +388,7 @@ export class AcpEventSource {
     // transcript records it so history reads (`message.list` through the
     // safety net) include the live turn.
     this._setStatus(tag, 'busy');
-    for (const event of acpTurnStartedToEvents(tag, this.options.directory)) {
+    for (const event of acpTurnStartedToEvents(tag, dir)) {
       this._publish(event);
     }
     const turnUserId = userMessageId ?? `msg_${tag}-user${Date.now().toString(36)}`;
@@ -337,24 +402,25 @@ export class AcpEventSource {
         item: { type: 'user', payload: { text } },
       },
       created: Date.now(),
-      ...(this.options.directory ? { location: { directory: this.options.directory } } : {}),
+      ...(dir ? { location: { directory: dir } } : {}),
     });
 
+    let turn = null;
     try {
-      this._session.prompt(text);
+      turn = await this._openTurn(tag, text);
       for (;;) {
         if (this._promptAbort.signal.aborted) {
-          for (const event of acpStopReasonToSessionStatus(tag, 'cancelled', this._acc, this.options.directory)) {
+          for (const event of acpStopReasonToSessionStatus(tag, 'cancelled', this._acc, dir)) {
             this._publish(event);
           }
           this._setStatus(tag, 'idle');
           return 'cancelled';
         }
-        const message = await this._session.nextUpdate();
+        const message = await turn.nextUpdate();
         if (message?.kind === 'stop') {
           const stopReason = message.response?.stopReason ?? 'end_turn';
           console.log('[acp] stop stopReason=' + stopReason + ' session=' + tag + (isAcpDebug() ? ' raw=' + JSON.stringify(message.response) : ''));
-          for (const event of acpStopReasonToSessionStatus(tag, stopReason, this._acc, this.options.directory)) {
+          for (const event of acpStopReasonToSessionStatus(tag, stopReason, this._acc, dir)) {
             this._publish(event);
           }
           if (this._acc.messageID) {
@@ -374,7 +440,7 @@ export class AcpEventSource {
         if (notification) {
           const updateKind = notification?.update?.sessionUpdate;
           const events = acpUpdateToEvents(notification, ctx(), this._acc);
-          const dirLabel = this.options.directory || '(none)';
+          const dirLabel = dir || '(none)';
           console.log('[acp] update sessionUpdate=' + updateKind + ' translated=' + events.length + ' session=' + tag + ' dir=' + dirLabel);
           if (isAcpDebug()) {
             console.log('[acp]   raw_notification=' + JSON.stringify(notification));
@@ -386,7 +452,7 @@ export class AcpEventSource {
       }
     } catch (error) {
       if (this._promptAbort?.signal.aborted) {
-        for (const event of acpStopReasonToSessionStatus(tag, 'cancelled', this._acc, this.options.directory)) {
+        for (const event of acpStopReasonToSessionStatus(tag, 'cancelled', this._acc, dir)) {
           this._publish(event);
         }
         if (this._acc.messageID) {
@@ -403,16 +469,18 @@ export class AcpEventSource {
         return 'cancelled';
       }
       console.warn(`[acp] transport error during prompt (session=${tag}): ${error?.message ?? error}`);
-      for (const event of acpErrorToSessionStatus(tag, error?.message ?? String(error), this._acc, this.options.directory)) {
+      for (const event of acpErrorToSessionStatus(tag, error?.message ?? String(error), this._acc, dir)) {
         this._publish(event);
       }
       this._setStatus(tag, 'idle');
       throw error;
     } finally {
+      turn?.close();
       // A turn that ends with a permission still open must cancel it, so the
       // card disappears and the agent's request is answered instead of hanging.
       this._cancelPendingPermissions();
       this._activeTag = null;
+      this._turnDirectory = null;
       this._promptAbort = null;
       this._prompting = false;
     }
@@ -446,41 +514,65 @@ export class AcpEventSource {
    * because it risked intercepting notifications the ActiveSession needs for
    * the prompt flow).
    */
-  async loadSession(sessionId, { userMessageId, directory } = {}) {
+  async loadSession(sessionId, { directory } = {}) {
     if (!this._ctx) throw new Error('ACP connection not ready');
-    if (this._prompting) {
-      // The ACP connection runs ONE session at a time. A session/load arriving
-      // mid-turn (the UI's message loader replaying another sidebar session)
-      // swaps the agent's live session and strands the running prompt, so it
-      // is refused until the turn ends. History for non-active sessions is
-      // simply unavailable during a turn.
-      console.log('[acp] session/load deferred while a prompt is running: ' + sessionId);
-      return [];
-    }
-    if (sessionId === this.sessionID) {
-      // Loading the session this connection is already running would make the
-      // agent swap its live session out from under the current turn. Callers
-      // (the message-history route) serve the transcript for the active
-      // session instead.
-      return [];
-    }
+    return this._exclusive(async () => {
+      if (this._prompting) {
+        // The ACP connection runs ONE session at a time. A session/load arriving
+        // mid-turn (the UI's message loader replaying another sidebar session)
+        // swaps the agent's live session and strands the running prompt, so it
+        // is refused until the turn ends. History for non-active sessions is
+        // unavailable during a turn; say so rather than return an empty history.
+        console.log('[acp] session/load deferred while a prompt is running: ' + sessionId);
+        throw new Error('ACP agent is busy with a turn; session history is unavailable until it finishes');
+      }
+      if (sessionId === this.sessionID) {
+        // Loading the session this connection created would make the agent swap
+        // its live session out from under it. Callers (the message-history
+        // route) serve the transcript for that session instead.
+        return [];
+      }
+      return this._replay(sessionId, directory);
+    });
+  }
+
+  /**
+   * Run `task` after every earlier exclusive task finished, whether it
+   * succeeded or not. Session switches and history loads share the agent's
+   * single session context and the replay state below, so they never overlap.
+   */
+  _exclusive(task) {
+    const result = this._exclusiveTail.then(task);
+    this._exclusiveTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  /** Replay `sessionId` with session/load and return the translated events. Callers hold the exclusive lock. */
+  async _replay(sessionId, directory) {
     console.log('[acp] session/load sessionId=' + sessionId + ' dir=' + (directory || '(none)'));
     this._loadingSessionId = sessionId;
     this._acc = { messageID: null, fullText: "" };
     this._loadDirectory = directory ?? this.options.directory;
     this._replayEvents = [];
     resetReplayCounters(sessionId);
+    // The agent's state is unknown until the load succeeds.
+    this._current = null;
+    if (sessionId === this.sessionID) this._sdkQueueClean = false;
     try {
       await Promise.race([
         this._ctx.request(acp.methods.agent.session.load, {
           sessionId,
-          cwd: this.options.cwd || process.cwd(),
+          cwd: this.options.resolveSessionDirectory?.(sessionId) || this.options.cwd || process.cwd(),
           mcpServers: [],
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('session/load timed out')), 15000)),
       ]);
+      this._current = sessionId;
     } catch (error) {
+      // A failed replay is a failure, not an empty history: callers must not
+      // cache or render it as an authoritative empty session.
       console.warn('[acp] session/load failed: ' + (error?.message ?? error));
+      throw error;
     } finally {
       console.log('[acp] session/load done; replayed notifications: ' + (this._replayCount ?? 0) + '; events: ' + this._replayEvents.length);
       this._replayCount = 0;
@@ -491,12 +583,94 @@ export class AcpEventSource {
   }
 
   /**
+   * Make `sessionId` the session the agent runs prompts in. A no-op when it
+   * already is. Otherwise the agent is moved with session/resume when it
+   * advertises it (no replay), else session/load (replay discarded). An agent
+   * that can do neither, or a failed switch, rejects: a prompt must never run
+   * in a session other than the one it was sent to.
+   */
+  switchTo(sessionId) {
+    if (!this._ctx) return Promise.reject(new Error('ACP connection not ready'));
+    return this._exclusive(async () => {
+      if (this._current === sessionId) return;
+      const capabilities = this._connection?.initializeResult?.agentCapabilities ?? {};
+      const canResume = Boolean(capabilities.sessionCapabilities?.resume);
+      if (!canResume && !capabilities.loadSession) {
+        throw new Error('ACP agent cannot switch to another session (no session/resume or session/load support), so the prompt was not sent');
+      }
+      const directory = this.options.resolveSessionDirectory?.(sessionId);
+      try {
+        if (canResume) {
+          this._current = null;
+          if (sessionId === this.sessionID) this._sdkQueueClean = false;
+          await Promise.race([
+            this._ctx.request(acp.methods.agent.session.resume, {
+              sessionId,
+              cwd: directory || this.options.cwd || process.cwd(),
+              mcpServers: [],
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('session/resume timed out')), 15000)),
+          ]);
+          this._current = sessionId;
+        } else {
+          await this._replay(sessionId, directory);
+        }
+      } catch (error) {
+        throw new Error(`Could not switch the ACP agent to session ${sessionId}: ${error?.message ?? error}`, { cause: error });
+      }
+    });
+  }
+
+  /**
+   * Send the prompt and return the turn's update stream (`nextUpdate()` yields
+   * session updates, then a `stop`). The session created by session/new keeps
+   * using the SDK ActiveSession; any other session is switched to first and
+   * driven with a raw session/prompt whose updates arrive through the
+   * connection's notification handler.
+   */
+  async _openTurn(sessionId, text) {
+    const useSdk = sessionId === this.sessionID && this._sdkQueueClean && this._current === sessionId;
+    if (useSdk) {
+      this._session.prompt(text);
+      return { nextUpdate: () => this._session.nextUpdate(), close() {} };
+    }
+    await this.switchTo(sessionId);
+    if (sessionId === this.sessionID) this._sdkQueueClean = false;
+    // A switch replays the target's history through the shared accumulator;
+    // this turn starts from a clean one.
+    this._acc = { messageID: null, fullText: '' };
+    const queue = new UpdateQueue();
+    this._turnQueue = queue;
+    this._turnSessionId = sessionId;
+    this._ctx
+      .request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: 'text', text }] })
+      .then(
+        // Let notifications the agent sent before its response drain first.
+        (response) => setTimeout(() => queue.push({ kind: 'stop', response }), 0),
+        (error) => queue.fail(error),
+      );
+    return {
+      nextUpdate: () => queue.next(),
+      close: () => {
+        if (this._turnQueue === queue) {
+          this._turnQueue = null;
+          this._turnSessionId = null;
+        }
+      },
+    };
+  }
+
+  /**
    * Handle session/update notifications during session/load. Collects events
    * into _replayEvents (returned by loadSession as an HTTP response body)
    * instead of publishing through the hub. This prevents cross-tab duplication
    * — only the requesting tab receives the events.
    */
   _handleReplayNotification(params) {
+    if (this._turnQueue && params?.sessionId === this._turnSessionId) {
+      this._turnQueue.push({ kind: 'session_update', notification: params, update: params.update });
+      return;
+    }
     if (!this._loadingSessionId) return;
     this._replayCount = (this._replayCount ?? 0) + 1;
     if (isAcpDebug()) {
@@ -517,7 +691,7 @@ export class AcpEventSource {
 
   _publish(event, directoryOverride) {
     try {
-      const dir = directoryOverride ?? this.options.directory;
+      const dir = directoryOverride ?? this._turnDirectory ?? this.options.directory;
       this.options.hub?.publishEvent?.(event, { directory: dir });
     } catch {
       // Publishing must never break the prompt loop; best-effort fan-out.

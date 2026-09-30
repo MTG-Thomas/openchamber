@@ -7,12 +7,26 @@
 // Per decision FEAT-2010-DEC-1, one ACP agent connection is active at a time
 // (single-client); initialize replaces any active source.
 
+import { createHash } from 'node:crypto';
 import express from 'express';
 import { isAcpEnabled, getStartupAcpConfig } from './env.js';
 import { AcpEventSource } from './acp-event-source.js';
 import { acpTelemetry } from './telemetry.js';
 import { writeAcpAgentConfig, clearAcpAgentConfig } from './acp-config.js';
-import { getTranscript } from './session-transcript.js';
+import { getTranscript, deleteTranscript } from './session-transcript.js';
+import {
+  setRegistryOwner,
+  hasAcpSession,
+  acpSessionCount,
+  acpSessionDirectories,
+  upsertAcpSession,
+  removeAcpSession,
+  getAcpSessionDirectory,
+  recordAgentSessions,
+  getAcpSessionInfo,
+  listAcpSessionInfos,
+  _resetAcpSessionRegistry,
+} from './session-registry.js';
 
 let activeSource = null;
 let activeConfig = null;
@@ -22,8 +36,66 @@ let activeConfig = null;
 // carry into the session that gets created.
 let stickyModel = null;
 
-/** Set of known ACP session IDs (populated from session/list + creates). */
-export const knownAcpSessionIds = new Set();
+// How long an agent `session/list` answer for one directory is reused. Session
+// list requests are polled by the UI; the agent is asked at most this often.
+const SESSION_REFRESH_TTL_MS = 10_000;
+// A slow agent must never hold a session list (and with it the sidebar) hostage.
+const SESSION_REFRESH_TIMEOUT_MS = 3_000;
+const sessionRefreshedAt = new Map(); // directory -> ms
+
+/**
+ * Identity of an agent: the launch configuration that decides what process
+ * runs and which sessions it owns (command, args, env, agent id). The working
+ * directory is not part of it: it is per session, and one agent serves
+ * sessions in many projects. Hashed so env values are never kept as a string.
+ */
+const agentIdentity = ({ command, args, env, agentId }) => {
+  const envEntries = env && typeof env === 'object'
+    ? Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    : [];
+  return createHash('sha256')
+    .update(JSON.stringify([command, Array.isArray(args) ? args : [], envEntries, typeof agentId === 'string' ? agentId : '']))
+    .digest('hex');
+};
+
+/**
+ * Bind the session registry to the configured agent. Switching to a different
+ * agent (or none) drops the previous agent's sessions: their ids mean nothing
+ * to the new agent.
+ */
+const adoptAgent = (identity) => {
+  setRegistryOwner(identity);
+  sessionRefreshedAt.clear();
+};
+
+// Sources whose start() has not resolved yet. They are not the active source
+// until it does, so teardown must be able to find and cancel them.
+const pendingStarts = new Set();
+let startupLoop = null;
+
+class AcpStartSuperseded extends Error {
+  constructor() {
+    super('ACP agent start was superseded by a newer request or a configuration change');
+  }
+}
+
+/** source.start(), cancellable by teardownActive(); rejects with AcpStartSuperseded when cancelled. */
+const startTracked = async (source) => {
+  const token = { source, cancelled: false };
+  pendingStarts.add(token);
+  try {
+    const session = await source.start();
+    if (token.cancelled) {
+      await source.stop().catch(() => {});
+      throw new AcpStartSuperseded();
+    }
+    return session;
+  } catch (error) {
+    throw token.cancelled ? new AcpStartSuperseded() : error;
+  } finally {
+    pendingStarts.delete(token);
+  }
+};
 
 // Cache of session messages to avoid re-replaying on every request.
 const sessionMessageCache = new Map();
@@ -70,8 +142,10 @@ export async function getAcpSessionMessages(sessionId) {
   }
 
   if (!activeSource) {
-    // No active connection: an empty transcript is a genuinely empty session.
-    return [];
+    // Without a connection the agent's history cannot be read, and an empty
+    // list would pass for an authoritative empty session (and be cached by the
+    // UI as such). Fail so the caller reports it.
+    throw new Error('ACP agent is not running; session history is unavailable');
   }
 
   const loader = (async () => {
@@ -144,6 +218,111 @@ const eventsToOpenCodeMessages = (events) => {
 const json = (res, status, body) =>
   res.status(status).json(body);
 
+const withTimeout = (promise, ms, label) => {
+  let timer;
+  const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
+/**
+ * Ask the active agent for its sessions in `directory` (session/list) and fold
+ * them into the registry. Skipped while the agent is mid-turn or mid-load (the
+ * connection serves one session context at a time) and throttled per directory.
+ * A failure leaves the registry as it was: stale entries beat a vanished sidebar.
+ */
+const refreshAgentSessions = async (directory, { force = false } = {}) => {
+  const source = activeSource;
+  if (!source || !directory || source.isBusy()) return;
+  if (!force && Date.now() - (sessionRefreshedAt.get(directory) ?? 0) < SESSION_REFRESH_TTL_MS) return;
+  sessionRefreshedAt.set(directory, Date.now());
+  try {
+    const sessions = await withTimeout(source.listSessions(directory), SESSION_REFRESH_TIMEOUT_MS, 'ACP session/list');
+    recordAgentSessions(sessions, directory);
+  } catch (error) {
+    sessionRefreshedAt.delete(directory);
+    console.warn(`[acp] session/list refresh failed for ${directory}: ${error?.message ?? error}`);
+  }
+};
+
+/**
+ * Add the known ACP sessions to an OpenCode `session.list` answer
+ * (`{ data: SessionInfo[], cursor }`). `directory` scopes the list the same way
+ * OpenCode scopes its own.
+ */
+const overlayAcpSessionList = async (body, { directory, search } = {}) => {
+  const directories = directory
+    ? [directory]
+    : [...new Set([...acpSessionDirectories(), activeSource?.options?.cwd].filter((d) => typeof d === 'string' && d))];
+  await Promise.all(directories.map((d) => refreshAgentSessions(d)));
+  const known = new Set(body.data.map((session) => session?.id));
+  const added = listAcpSessionInfos({ directory, search }).filter((session) => !known.has(session.id));
+  return added.length === 0 ? body : { ...body, data: [...body.data, ...added] };
+};
+
+const decodedDirectoryHeader = (req) => {
+  const raw = req.get?.('x-opencode-directory');
+  if (typeof raw !== 'string' || !raw) return undefined;
+  if (req.get('x-opencode-directory-encoding') !== 'uri') return raw;
+  try { return decodeURIComponent(raw); } catch { return raw; }
+};
+
+/**
+ * Express middleware (mounted on `/api`, ahead of the OpenCode proxy): every
+ * session list the UI reads replaces what the sidebar holds, and OpenCode's
+ * list cannot contain ACP sessions, so the first page of each list is served
+ * with the known ACP sessions added. Lists OpenCode answers with an error, or
+ * that ACP sessions cannot belong to (children, other projects, later pages),
+ * pass through unchanged.
+ */
+export const acpSessionListOverlay = (req, res, next) => {
+  if (req.method !== 'GET' || req.path !== '/session') return next();
+  if (!activeSource && acpSessionCount() === 0) return next();
+  const query = req.query ?? {};
+  const parentID = typeof query.parentID === 'string' && query.parentID !== 'null' ? query.parentID : '';
+  if (query.cursor || parentID || query.project || query.subpath) return next();
+
+  const directory = (typeof query.directory === 'string' && query.directory) || decodedDirectoryHeader(req);
+  const search = typeof query.search === 'string' ? query.search : undefined;
+  const sendJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode !== 200 || !Array.isArray(body?.data)) return sendJson(body);
+    overlayAcpSessionList(body, { directory, search }).then(sendJson, (error) => {
+      console.warn(`[acp] session list overlay failed: ${error?.message ?? error}`);
+      sendJson(body);
+    });
+    return res;
+  };
+  return next();
+};
+
+/**
+ * Express middleware (mounted on `/api`, ahead of the OpenCode proxy): answer
+ * session-by-id requests for KNOWN ACP sessions, which OpenCode would reject
+ * for a foreign id. Message requests return the agent's history in the
+ * OpenCode format; a history that cannot be read is an error, never an empty
+ * list. Everything else about other sessions falls through untouched.
+ */
+export const acpSessionInterceptor = async (req, res, next) => {
+  const match = req.path?.match(/^\/session\/([^/]+)/);
+  if (!match) return next();
+  let sessionId = match[1];
+  try { sessionId = decodeURIComponent(sessionId); } catch { /* keep raw id */ }
+  if (!hasAcpSession(sessionId)) return next();
+
+  if (req.path.includes('/message')) {
+    try {
+      const messages = await getAcpSessionMessages(sessionId);
+      return res.status(200).json({ data: messages, cursor: {} });
+    } catch (error) {
+      console.warn(`[acp] /session/${sessionId}/message failed: ${error?.message ?? error}`);
+      return res.status(502).json({ error: `ACP session history unavailable: ${error?.message ?? 'unknown error'}` });
+    }
+  }
+
+  // session.get — the session's OpenCode 2.x record (directory included).
+  return res.status(200).json({ data: getAcpSessionInfo(sessionId) });
+};
+
 const ensureEnabled = (res) => {
   if (isAcpEnabled()) return true;
   json(res, 404, { error: 'ACP support is disabled (OPENCHAMBER_ACP_ENABLED)' });
@@ -151,11 +330,18 @@ const ensureEnabled = (res) => {
 };
 
 const teardownActive = async () => {
+  // A source still starting (startup init, or an earlier /initialize) would
+  // otherwise become active after this teardown and overwrite its result.
+  if (startupLoop) startupLoop.cancelled = true;
+  const pending = [...pendingStarts];
+  for (const token of pending) token.cancelled = true;
+  const stopping = pending.map((token) => token.source.stop().catch(() => {}));
   if (activeSource) {
-    await activeSource.stop().catch(() => {});
+    stopping.push(activeSource.stop().catch(() => {}));
     activeSource = null;
     activeConfig = null;
   }
+  await Promise.all(stopping);
 };
 
 /**
@@ -189,9 +375,11 @@ export async function initAcpOnStartup(hub, setSessionStatus) {
 
   const RETRY_DELAY_MS = 3000;
   let attempt = 0;
+  const loop = { cancelled: false };
+  startupLoop = loop;
 
   // Retry indefinitely — the agent may need multiple warm-up attempts.
-  for (;;) {
+  while (!loop.cancelled) {
     attempt += 1;
     console.log(`[acp] startup init (attempt ${attempt}): command=${config.command}`);
     const source = new AcpEventSource({
@@ -203,28 +391,30 @@ export async function initAcpOnStartup(hub, setSessionStatus) {
       command: config.command,
       args: config.args,
       cwd: config.cwd,
+      resolveSessionDirectory: getAcpSessionDirectory,
     });
 
     try {
-      await source.start();
+      await startTracked(source);
+      const identity = agentIdentity(config);
       activeSource = source;
-      activeConfig = { command: config.command, agentId: config.agentId };
-      knownAcpSessionIds.add(source.sessionID);
+      activeConfig = { command: config.command, agentId: config.agentId, identity };
+      adoptAgent(identity);
       console.log(`[acp] startup init complete: sessionId=${source.sessionID}`);
-      try {
-        const sessions = await source.listSessions(config.cwd);
-        for (const s of sessions) {
-          if (s.sessionId) knownAcpSessionIds.add(s.sessionId);
-        }
-        console.log(`[acp] startup session/list returned ${sessions.length} session(s); known ACP IDs: ${knownAcpSessionIds.size}`);
-      } catch (e) {
-        console.warn(`[acp] startup session/list failed: ${e?.message ?? e}`);
-      }
+      // The agent's existing sessions for the project directory; the session
+      // created above stays unlisted until the user sends its first prompt.
+      await refreshAgentSessions(config.cwd || process.cwd(), { force: true });
+      console.log(`[acp] startup session/list done; known ACP sessions: ${acpSessionCount()}`);
       await applyStickyModel(source);
+      if (startupLoop === loop) startupLoop = null;
       return; // success
     } catch (error) {
-      console.error(`[acp] startup init attempt ${attempt} failed: ${error?.message ?? error}`);
       await source.stop().catch(() => {});
+      if (loop.cancelled || error instanceof AcpStartSuperseded) {
+        console.log('[acp] startup init cancelled by a newer request or configuration change');
+        return;
+      }
+      console.error(`[acp] startup init attempt ${attempt} failed: ${error?.message ?? error}`);
       console.log(`[acp] retrying in ${RETRY_DELAY_MS / 1000}s...`);
       await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
     }
@@ -242,10 +432,22 @@ export function registerAcpRoutes(app, options = {}) {
     if (!ensureEnabled(res)) return;
     const body = req.body ?? {};
     if (typeof body.command !== 'string' || body.command.trim().length === 0) {
-      // Empty command = clear the config (ACP agent removed or disabled).
+      // Empty command = clear the config (ACP agent removed or disabled). The
+      // agent stops with it, so its sessions leave the session lists.
       clearAcpAgentConfig();
+      await teardownActive();
+      adoptAgent(null);
       return json(res, 200, { ok: true });
     }
+    const command = body.command.trim();
+    const identity = agentIdentity({ command, args: body.args, env: body.env, agentId: body.agentId });
+    if (activeConfig?.identity !== identity) {
+      // A different launch configuration: the running agent (or one still
+      // starting) no longer matches the settings.
+      await teardownActive();
+    }
+    // Sessions of a previously configured, different agent leave the lists.
+    adoptAgent(identity);
     writeAcpAgentConfig({
       command: body.command,
       args: Array.isArray(body.args) ? body.args : undefined,
@@ -255,6 +457,10 @@ export function registerAcpRoutes(app, options = {}) {
     });
     return json(res, 200, { ok: true });
   });
+
+  // Whether this server has ACP enabled. Answered even when it is not, so the
+  // UI can tell "disabled" from "unreachable" and avoid a stored ACP selection.
+  app.get('/api/agent/acp/status', (_req, res) => json(res, 200, { enabled: isAcpEnabled() }));
 
   app.post('/api/agent/acp/initialize', express.json({ limit: "1mb" }), async (req, res) => {
     if (!ensureEnabled(res)) return;
@@ -282,25 +488,30 @@ export function registerAcpRoutes(app, options = {}) {
       args: Array.isArray(body.args) ? body.args : undefined,
       env: body.env && typeof body.env === 'object' ? body.env : undefined,
       cwd: typeof body.cwd === 'string' ? body.cwd : undefined,
+      resolveSessionDirectory: getAcpSessionDirectory,
     });
 
     try {
       const startedAt = Date.now();
       acpTelemetry.initializeStart(body.agentId);
-      const session = await source.start();
+      const session = await startTracked(source);
+      const identity = agentIdentity({ command, args: body.args, env: body.env, agentId: body.agentId });
       activeSource = source;
-      activeConfig = { command, agentId: body.agentId };
-      knownAcpSessionIds.add(session.sessionId);
+      activeConfig = { command, agentId: body.agentId, identity };
+      adoptAgent(identity);
+      const directory = source.options.directory || source.options.cwd || process.cwd();
+      upsertAcpSession({ id: session.sessionId, directory });
       acpTelemetry.initializeResult(body.agentId, 'success', Date.now() - startedAt);
       acpTelemetry.sessionCreated(body.agentId);
-      // Fetch existing sessions so the sidebar can populate immediately.
+      // The agent's earlier sessions in this directory join the registry, so
+      // the session lists the UI reads include them.
       let existingSessions = [];
       try {
-        existingSessions = await source.listSessions(body.cwd);
-        for (const s of existingSessions) {
-          if (s.sessionId) knownAcpSessionIds.add(s.sessionId);
-        }
-        console.log(`[acp] session/list returned ${existingSessions.length} session(s); known ACP IDs: ${knownAcpSessionIds.size}`);
+        // Bounded: a slow session/list is a partial result, never a failed initialize.
+        existingSessions = await withTimeout(source.listSessions(directory), SESSION_REFRESH_TIMEOUT_MS, 'ACP session/list');
+        recordAgentSessions(existingSessions, directory);
+        sessionRefreshedAt.set(directory, Date.now());
+        console.log(`[acp] session/list returned ${existingSessions.length} session(s); known ACP sessions: ${acpSessionCount()}`);
       } catch (e) {
         console.warn(`[acp] session/list failed: ${e?.message ?? e}`);
       }
@@ -315,9 +526,10 @@ export function registerAcpRoutes(app, options = {}) {
         configOptions: source.listConfigOptions?.() ?? [],
       });
     } catch (error) {
+      await source.stop().catch(() => {});
+      if (error instanceof AcpStartSuperseded) return json(res, 409, { error: error.message });
       acpTelemetry.initializeResult(body.agentId, 'error', 0, error?.code);
       acpTelemetry.transportError('initialize', error?.code);
-      await source.stop().catch(() => {});
       return json(res, 502, { error: error?.message ?? 'ACP initialize failed' });
     }
   });
@@ -332,11 +544,27 @@ export function registerAcpRoutes(app, options = {}) {
     if (!text) {
       return json(res, 400, { error: 'Missing required field: text' });
     }
-    if (activeSource.isPrompting()) {
+    const source = activeSource;
+    if (source.isPrompting()) {
       return json(res, 409, { error: 'An ACP turn is already running for this session' });
     }
-    const sessionID = typeof body.sessionID === 'string' ? body.sessionID : activeSource.sessionID;
+    const sessionID = typeof body.sessionID === 'string' ? body.sessionID : source.sessionID;
     const userMessageId = typeof body.userMessageId === 'string' ? body.userMessageId : undefined;
+
+    // A prompt runs in the session it was sent to. When the agent is on another
+    // session it is switched first; if it cannot be, the prompt is refused
+    // here, where the client can show the reason, instead of running elsewhere.
+    try {
+      await source.switchTo(sessionID);
+    } catch (error) {
+      return json(res, 502, { error: error?.message ?? 'Could not switch the ACP agent to that session' });
+    }
+    if (source !== activeSource) {
+      return json(res, 409, { error: 'The ACP agent was replaced while the prompt was being prepared' });
+    }
+    if (source.isPrompting()) {
+      return json(res, 409, { error: 'An ACP turn is already running for this session' });
+    }
 
     // Accept the turn and answer immediately. An ACP turn can run for minutes
     // (slow providers, tool use); holding this HTTP request open makes clients
@@ -345,7 +573,7 @@ export function registerAcpRoutes(app, options = {}) {
     // client over the event stream instead, exactly like an OpenCode turn.
     const startedAt = Date.now();
     acpTelemetry.promptSubmitted(activeConfig?.agentId);
-    void activeSource
+    void source
       .prompt({ text, sessionID, userMessageId })
       .then((stopReason) => {
         acpTelemetry.turnCompleted(activeConfig?.agentId, stopReason, Date.now() - startedAt);
@@ -434,6 +662,7 @@ export function registerAcpRoutes(app, options = {}) {
   app.post('/api/agent/acp/shutdown', express.json({ limit: "1mb" }), async (_req, res) => {
     if (!ensureEnabled(res)) return;
     await teardownActive();
+    adoptAgent(null);
     return json(res, 200, { ok: true });
   });
 
@@ -471,6 +700,10 @@ export function registerAcpRoutes(app, options = {}) {
     if (!sessionId) return json(res, 400, { error: 'Missing sessionId' });
     try {
       await activeSource.deleteSession(sessionId);
+      // Gone from the agent: gone from the lists, and its cached history too.
+      removeAcpSession(sessionId);
+      sessionMessageCache.delete(sessionId);
+      deleteTranscript(sessionId);
       return json(res, 200, { ok: true });
     } catch (error) {
       return json(res, 502, { error: error?.message ?? 'ACP session/delete failed' });
@@ -482,4 +715,6 @@ export function registerAcpRoutes(app, options = {}) {
 export const _resetAcpRoutesState = async () => {
   stickyModel = null;
   await teardownActive();
+  sessionRefreshedAt.clear();
+  _resetAcpSessionRegistry();
 };

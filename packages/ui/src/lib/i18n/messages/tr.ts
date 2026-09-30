@@ -1911,6 +1911,7 @@ export const dict = {
   'chat.sessionError.noDetails': 'OpenCode ayrıntı bildirmedi. Durum raporu son hataları gösterir.',
   'chat.sessionError.showStatus': 'OpenCode durumunu göster',
   'chat.sessionError.noReply': 'OpenCode bu mesaja yanıt vermeye başlamadı.',
+  'chat.sessionError.noReplyAgent': 'Ajan bu mesaja yanıt vermeye başlamadı.',
   'chat.sessionError.interrupted': 'OpenCode bu yanıtı kesti.',
   'chat.longError.expand': 'Hatanın tamamını göster',
   'chat.longError.collapse': 'Daha az göster',

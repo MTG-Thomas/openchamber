@@ -4,6 +4,9 @@
 // create/prompt seams (session-actions, session-ui-store) then route to it.
 
 import { create } from 'zustand';
+import { z } from 'zod';
+import { toast } from '@/components/ui';
+import { formatMessage, useI18nStore } from '@/lib/i18n';
 import { AcpClient } from '@/lib/agent/acp-client';
 import { setActiveAgentClient } from '@/lib/agent/active-client';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -57,8 +60,13 @@ const persist = (state: PersistedState) => {
   }
 };
 
+// Whether the server reported ACP as disabled. While it is, the stored ACP
+// choice stays in storage but is not used: the effective backend is OpenCode.
+let acpDisabledByServer = false;
+
 // Resolve the active ACP agent config, if any.
 const resolveActiveAcpAgent = (state: PersistedState): AcpAgentConfig | null => {
+  if (acpDisabledByServer) return null;
   if (state.activeBackend !== 'acp' || !state.activeAcpAgentId) return null;
   return state.agents.find((a) => a.id === state.activeAcpAgentId && a.enabled) ?? null;
 };
@@ -68,7 +76,7 @@ const resolveActiveAcpAgent = (state: PersistedState): AcpAgentConfig | null => 
 const persistToServer = (state: PersistedState) => {
   const agent = resolveActiveAcpAgent(state);
   const body = agent
-    ? { command: agent.command, args: agent.args, agentName: agent.name, agentId: agent.id }
+    ? { command: agent.command, args: agent.args, env: agent.env, agentName: agent.name, agentId: agent.id }
     : { command: '' }; // empty = clear
   void runtimeFetch('/api/agent/acp/config', {
     method: 'PUT',
@@ -99,6 +107,8 @@ const applySelection = (state: PersistedState) => {
 };
 
 type AgentBackendStore = PersistedState & {
+  /** The user's stored backend choice while the server has ACP disabled (`activeBackend` is then OpenCode). */
+  storedBackend: AgentBackendType | null;
   setBackend: (backend: AgentBackendType) => void;
   selectAcpAgent: (agentId: string | null) => void;
   addAgent: (agent: Omit<AcpAgentConfig, 'id'>) => string;
@@ -110,56 +120,99 @@ const initialState = loadPersisted();
 // Apply the persisted selection on module load so a reload keeps the backend.
 applySelection(initialState);
 
+// The user's own selection: what is stored, which differs from the visible
+// `activeBackend` while the server has ACP disabled.
+const selectionOf = (state: AgentBackendStore): PersistedState => ({
+  activeBackend: state.storedBackend ?? state.activeBackend,
+  activeAcpAgentId: state.activeAcpAgentId,
+  agents: state.agents,
+});
+
+// The visible backend for a user selection.
+const visibleBackend = (selection: PersistedState): AgentBackendType =>
+  acpDisabledByServer ? 'opencode' : selection.activeBackend;
+
 const commit = (next: PersistedState): Partial<AgentBackendStore> => {
   persist(next);
   persistToServer(next);
   applySelection(next);
-  return next;
+  return {
+    ...next,
+    activeBackend: visibleBackend(next),
+    storedBackend: acpDisabledByServer ? next.activeBackend : null,
+  };
+};
+
+const acpStatusSchema = z.object({ enabled: z.boolean() });
+
+// Ask the server whether ACP is enabled. A stored ACP selection is not used
+// when it is not: fall back to OpenCode, say so, and keep the stored choice.
+// Anything other than a clear answer (network error, 5xx) changes nothing.
+export const refreshAcpAvailability = async (): Promise<void> => {
+  let disabled: boolean;
+  try {
+    const response = await runtimeFetch('/api/agent/acp/status', { headers: { Accept: 'application/json' } });
+    if (response.status === 404) {
+      disabled = true; // a server without ACP support at all
+    } else if (response.ok) {
+      const parsed = acpStatusSchema.safeParse(await response.json().catch(() => null));
+      if (!parsed.success) return;
+      disabled = !parsed.data.enabled;
+    } else {
+      return;
+    }
+  } catch {
+    return;
+  }
+  if (disabled === acpDisabledByServer) return;
+  acpDisabledByServer = disabled;
+  const selection = selectionOf(useAgentBackendStore.getState());
+  applySelection(selection);
+  useAgentBackendStore.setState({
+    activeBackend: visibleBackend(selection),
+    storedBackend: disabled ? selection.activeBackend : null,
+  });
+  if (disabled && selection.activeBackend === 'acp') {
+    toast.info(formatMessage(useI18nStore.getState().dictionary, 'settings.agentBackend.unavailable'));
+  }
 };
 
 export const useAgentBackendStore = create<AgentBackendStore>((set, get) => ({
   ...initialState,
 
+  storedBackend: null,
+
   setBackend: (backend) => {
-    const current = get();
-    commit({ ...current, activeBackend: backend });
-    set({ activeBackend: backend });
+    set(commit({ ...selectionOf(get()), activeBackend: backend }));
   },
 
   selectAcpAgent: (agentId) => {
-    const current = get();
-    commit({ ...current, activeAcpAgentId: agentId });
-    set({ activeAcpAgentId: agentId });
+    set(commit({ ...selectionOf(get()), activeAcpAgentId: agentId }));
   },
 
   addAgent: (agent) => {
-    const current = get();
+    const current = selectionOf(get());
     const id = `acp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const newAgent: AcpAgentConfig = { ...agent, id };
-    const next = { ...current, agents: [...current.agents, newAgent] };
-    commit(next);
-    set({ agents: next.agents });
+    set(commit({ ...current, agents: [...current.agents, newAgent] }));
     return id;
   },
 
   updateAgent: (id, patch) => {
-    const current = get();
-    const next = {
+    const current = selectionOf(get());
+    set(commit({
       ...current,
       agents: current.agents.map((a) => (a.id === id ? { ...a, ...patch } : a)),
-    };
-    commit(next);
-    set({ agents: next.agents });
+    }));
   },
 
   removeAgent: (id) => {
-    const current = get();
-    const next = {
+    const current = selectionOf(get());
+    set(commit({
       ...current,
       agents: current.agents.filter((a) => a.id !== id),
       activeAcpAgentId: current.activeAcpAgentId === id ? null : current.activeAcpAgentId,
-    };
-    commit(next);
-    set({ agents: next.agents, activeAcpAgentId: next.activeAcpAgentId });
+    }));
   },
 }));
+

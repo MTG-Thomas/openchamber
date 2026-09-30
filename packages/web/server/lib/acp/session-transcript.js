@@ -79,5 +79,8 @@ export const getTranscript = (sessionId) => {
   });
 };
 
+/** Drop a session's recorded messages (the session was deleted). */
+export const deleteTranscript = (sessionId) => { transcripts.delete(sessionId); };
+
 /** Test helper. */
 export const clearTranscripts = () => transcripts.clear();

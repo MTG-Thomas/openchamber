@@ -2546,4 +2546,5 @@ export const settingsDict = {
   "settings.agentBackend.field.command.placeholder": "p. ej. claude-code",
   "settings.agentBackend.field.enabled": "Activado",
   "settings.agentBackend.empty": "Aún no hay agentes ACP configurados.",
+  "settings.agentBackend.unavailable": "ACP no está habilitado en este servidor (OPENCHAMBER_ACP_ENABLED). Se usa OpenCode en su lugar; se conserva tu elección de agente ACP.",
 } as const;

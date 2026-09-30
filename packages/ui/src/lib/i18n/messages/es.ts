@@ -2004,6 +2004,7 @@ export const dict: Record<I18nKey, string> = {
   "chat.sessionError.noDetails": "OpenCode no informó detalles. El informe de estado muestra los errores recientes.",
   "chat.sessionError.showStatus": "Mostrar estado de OpenCode",
   "chat.sessionError.noReply": "OpenCode no comenzó una respuesta a este mensaje.",
+  "chat.sessionError.noReplyAgent": "El agente no comenzó una respuesta a este mensaje.",
   "chat.sessionError.interrupted": 'OpenCode interrumpió esta respuesta.',
   'chat.longError.expand': 'Mostrar el error completo',
   'chat.longError.collapse': 'Mostrar menos',

@@ -225,8 +225,7 @@ function updateLiveSession(session: Session, directory?: string): boolean {
   return false
 }
 
-/** Exported for the ACP session bootstrap, which mirrors agent sessions into live stores. */
-export function mirrorSessionIntoLiveStores(session: Session, directory?: string): void {
+function mirrorSessionIntoLiveStores(session: Session, directory?: string): void {
   if (directory && updateLiveSession(session, directory)) {
     return
   }

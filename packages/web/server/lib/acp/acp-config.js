@@ -8,15 +8,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'openchamber');
-const CONFIG_FILE = path.join(CONFIG_DIR, 'acp-agent-config.json');
+// Same data-dir resolution as the rest of the server: OPENCHAMBER_DATA_DIR when
+// set, otherwise ~/.config/openchamber. Resolved per call so the environment is
+// read when the config is used, not when this module loads.
+const resolveConfigDir = () => (process.env.OPENCHAMBER_DATA_DIR
+  ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'openchamber'));
+const resolveConfigFile = () => path.join(resolveConfigDir(), 'acp-agent-config.json');
 
 /**
  * Read the persisted ACP agent config. Returns null if not configured yet.
  */
 export const readAcpAgentConfig = () => {
   try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
+    const raw = fs.readFileSync(resolveConfigFile(), 'utf8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.command === 'string' && parsed.command.trim().length > 0) {
       return parsed;
@@ -33,10 +38,11 @@ export const readAcpAgentConfig = () => {
 export const writeAcpAgentConfig = (config) => {
   if (!config || typeof config.command !== 'string') return;
   try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    const tmp = `${CONFIG_FILE}.tmp-${process.pid}`;
+    const file = resolveConfigFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp-${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify(config, null, 2));
-    fs.renameSync(tmp, CONFIG_FILE);
+    fs.renameSync(tmp, file);
   } catch {
     // Best-effort — a failed write must never break the session flow.
   }
@@ -47,7 +53,7 @@ export const writeAcpAgentConfig = (config) => {
  */
 export const clearAcpAgentConfig = () => {
   try {
-    fs.rmSync(CONFIG_FILE, { force: true });
+    fs.rmSync(resolveConfigFile(), { force: true });
   } catch {
     // ignore
   }

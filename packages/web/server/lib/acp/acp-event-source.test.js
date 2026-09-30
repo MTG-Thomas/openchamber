@@ -42,7 +42,7 @@ describe('AcpEventSource end-to-end translation (TC-14, assumption #1)', () => {
       sessionID: 'oc-sess-1',
     });
 
-    const stopReason = await src.prompt({ text: 'Hello', sessionID: 'oc-sess-1' });
+    const stopReason = await src.prompt({ text: 'Hello', sessionID: src.sessionID });
 
     expect(stopReason).toBe('end_turn');
     // Expect at least: the assistant step opened, streamed text, and the turn
@@ -69,7 +69,7 @@ describe('AcpEventSource end-to-end translation (TC-14, assumption #1)', () => {
       args: [mockAgentPath],
     });
 
-    const turn = src.prompt({ text: 'permission:allow', sessionID: 'oc-sess-perm' });
+    const turn = src.prompt({ text: 'permission:allow', sessionID: src.sessionID });
 
     // The request surfaces to the UI as a permission.asked wire event.
     const deadline = Date.now() + 10000;
@@ -78,7 +78,7 @@ describe('AcpEventSource end-to-end translation (TC-14, assumption #1)', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(asked).toBeTruthy();
-    expect(asked.data.sessionID).toBe('oc-sess-perm');
+    expect(asked.data.sessionID).toBe(src.sessionID);
     expect(asked.data.action).toBe('edit');
     expect(asked.data.resources).toContain('/tmp/acp-permission-target');
     expect(asked.data.message).toBe('Write to /tmp/acp-permission-target');
@@ -110,5 +110,46 @@ describe('AcpEventSource end-to-end translation (TC-14, assumption #1)', () => {
     // start() failure does not publish (no session yet); the error surfaces via
     // the rejected promise. prompt() on a dead source also fails explicitly.
     await expect(src.prompt({ text: 'hi' })).rejects.toThrow();
+  }, 15000);
+});
+
+describe('AcpEventSource history loads (serialization)', () => {
+  it('never mixes the replay state of two concurrent session/load calls', async () => {
+    const src = await startSource({
+      hub: captureHub(),
+      agentId: 'es-load',
+      command: process.execPath,
+      args: [mockAgentPath],
+      env: { MOCK_AGENT_LOAD: '1', MOCK_AGENT_LOAD_DELAY_MS: '100' },
+    });
+
+    const [x, y] = await Promise.all([src.loadSession('sess-x'), src.loadSession('sess-y')]);
+
+    expect(JSON.stringify(x)).toContain('replay:sess-x');
+    expect(JSON.stringify(x)).not.toContain('replay:sess-y');
+    expect(JSON.stringify(y)).toContain('replay:sess-y');
+    expect(JSON.stringify(y)).not.toContain('replay:sess-x');
+  }, 15000);
+
+  it('refuses a load while a turn is running instead of returning an empty history', async () => {
+    const hub = captureHub();
+    const src = await startSource({
+      hub,
+      agentId: 'es-busy',
+      command: process.execPath,
+      args: [mockAgentPath],
+      env: { MOCK_AGENT_LOAD: '1' },
+    });
+    // The mock's permission turn stays open until the user answers.
+    const turn = src.prompt({ text: 'permission:allow', sessionID: src.sessionID });
+    const deadline = Date.now() + 10000;
+    let asked;
+    while (Date.now() < deadline && !(asked = hub.events.find((e) => e.type === 'permission.asked'))) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(asked).toBeTruthy();
+    await expect(src.loadSession('sess-x')).rejects.toThrow(/busy/);
+    src.resolvePermission(asked.data.id, 'once');
+    expect(await turn).toBe('end_turn');
   }, 15000);
 });

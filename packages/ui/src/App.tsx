@@ -12,7 +12,7 @@ import { MemoryDebugPanel } from '@/components/ui/MemoryDebugPanel';
 import { setStreamPerfMemoryDebugEnabled } from '@/stores/utils/streamDebug';
 import { setRequestsInFlightTrackingEnabled } from '@/stores/utils/requestsInFlight';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import { useAcpSessionBootstrap } from '@/lib/agent/use-acp-session-bootstrap';
+import { refreshAcpAvailability } from '@/stores/useAgentBackendStore';
 // useEventStream removed — replaced by SyncProvider + SyncBridge
 import { useMenuActions } from '@/hooks/useMenuActions';
 import { useSessionStatusBootstrap } from '@/hooks/useSessionStatusBootstrap';
@@ -166,8 +166,11 @@ function App({ apis }: AppProps) {
     }
   }, []);
 
-  // Populate the sidebar with existing ACP sessions on mount / backend switch.
-  useAcpSessionBootstrap();
+  // A stored ACP choice is used optimistically until the server says whether
+  // ACP is enabled; if it is not, the app falls back to OpenCode.
+  React.useEffect(() => {
+    void refreshAcpAvailability();
+  }, []);
 
   const initializeApp = useConfigStore((s) => s.initializeApp);
   const isInitialized = useConfigStore((s) => s.isInitialized);

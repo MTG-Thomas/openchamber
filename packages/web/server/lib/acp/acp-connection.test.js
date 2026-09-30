@@ -63,6 +63,12 @@ describe('AcpAgentConnection initialize handshake', () => {
     // stopAll in afterEach handles teardown; this asserts the start rejected.
   }, 15000);
 
+  it('names the missing command instead of reporting a bare abort', async () => {
+    await expect(
+      startConnection({ agentId: 'bad-2', command: '/nonexistent/acp-agent' })
+    ).rejects.toThrow('ACP agent command not found: /nonexistent/acp-agent');
+  }, 15000);
+
   it('runs onReady after initialize and parks until stop (lifecycle)', async () => {
     let readySeen = false;
     let initSeen = null;
