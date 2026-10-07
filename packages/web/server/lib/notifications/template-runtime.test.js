@@ -1,3 +1,5 @@
+import { upsertAcpSession, _resetAcpSessionRegistry } from '../acp/session-registry.js';
+import { recordAssistantMessage, clearTranscripts } from '../acp/session-transcript.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createNotificationTemplateRuntime } from './template-runtime.js';
@@ -113,4 +115,17 @@ describe('notification template session info', () => {
     expect(seenHeaders[0]).toMatchObject({ Authorization: 'Basic dGVzdDp0ZXN0' });
     expect(variables.session_name).toBe('Nightly cleanup');
   });
+});
+
+
+it('uses the owning ACP registry and transcript for notification content', async () => {
+  try {
+    upsertAcpSession({ id: 'acp-notification-fixture', directory: '/tmp', title: 'Muse test' });
+    recordAssistantMessage('acp-notification-fixture', { messageID: 'msg_fixture', text: 'Muse completed' });
+    globalThis.fetch = vi.fn(() => { throw new Error('Must not query OpenCode for ACP content'); });
+    const runtime = createRuntime();
+    expect((await runtime.buildTemplateVariables({ properties: { info: {} } }, 'acp-notification-fixture')).session_name).toBe('Muse test');
+    expect(await runtime.fetchLastAssistantMessageText('acp-notification-fixture')).toBe('Muse completed');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  } finally { _resetAcpSessionRegistry(); clearTranscripts(); }
 });
