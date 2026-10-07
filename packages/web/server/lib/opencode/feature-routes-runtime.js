@@ -1,3 +1,4 @@
+import { createOpenCodeSessionOwnershipProbe } from '../acp/open-code-ownership.js';
 import { registerFsRoutes } from '../fs/routes.js';
 import { registerEnvironmentRoutes } from '../environment/routes.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
@@ -664,14 +665,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     // The routes register either way: each answers 404 while ACP is disabled,
     // and `/api/agent/acp/status` reports the flag to the UI.
     registerAcpRoutes(app, { globalMessageStreamHub, setSessionStatus,
-      openCodeSessionExists: async (sessionId) => {
-        const response = await fetch(buildOpenCodeUrl(`/api/session/${encodeURIComponent(sessionId)}`, ''), {
-          headers: getOpenCodeAuthHeaders(), signal: AbortSignal.timeout(5000),
-        });
-        if (response.status === 404) return false;
-        if (!response.ok) throw new Error('OpenCode ownership probe failed');
-        return true;
-      },
+      openCodeSessionExists: createOpenCodeSessionOwnershipProbe({ buildOpenCodeUrl, getOpenCodeAuthHeaders }),
     });
     if (isAcpEnabled()) {
       // ACP sessions do not exist in OpenCode: serve them in session lists
