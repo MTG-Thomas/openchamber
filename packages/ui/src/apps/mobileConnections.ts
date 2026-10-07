@@ -1,3 +1,4 @@
+import type { RuntimeConnection } from '@/lib/runtimes/connection';
 // Saved-connection storage + the shared connect/unlock flow for the dedicated
 // mobile app. Both the onboarding welcome screen and the Instances sheet drive
 // connections through `useMobileConnection` so the health-check + progressive
@@ -1739,4 +1740,31 @@ export const useMobileConnection = (onConnected: () => void): UseMobileConnectio
     removeConnection,
     setError,
   };
+};
+
+/** Read-only index enrollment. Tokens remain in Keychain/Keystore on native. */
+export const loadMobileRuntimeOwners = async (): Promise<Array<{ id: string; label: string; savedId: string }>> =>
+  (await loadMobileConnections()).map((connection) => ({ id: secureTokenKeyOf(connection), label: connection.label, savedId: connection.id }));
+
+export const prepareMobileRuntimeConnection = async (savedId: string): Promise<RuntimeConnection> => {
+  const saved = (await loadMobileConnections()).find((connection) => connection.id === savedId);
+  if (!saved) throw new Error('Saved instance is unavailable');
+  const id = secureTokenKeyOf(saved);
+  const token = isCapacitorApp() ? (saved.hasToken ? await readSecureToken(id) : undefined) : saved.clientToken;
+  if (saved.hasToken && !token) throw new Error('Unlock this instance before loading its sessions');
+  const result = await probeConnectionCandidates(saved.candidates, token, { fast: true });
+  if (result.status !== 'ok') throw new Error('Instance is unreachable or needs to be unlocked in Instances');
+  const transport = result.transport;
+  if (transport.kind === 'relay') transport.tunnel?.close();
+  const connection: RuntimeConnection = { id,
+    baseUrl: transport.kind === 'direct' ? transport.url : 'http://openchamber.runtime',
+    clientToken: token,
+    activate: async () => {
+      const latest = await probeConnectionCandidates(saved.candidates, token);
+      if (latest.status !== 'ok') throw new Error('Instance is unreachable or needs to be unlocked in Instances');
+      switchToTransport(latest.transport, token ?? null, { runtimeKey: id });
+    },
+  };
+  if (transport.kind === 'relay') connection.relay = transport.relay;
+  return connection;
 };
