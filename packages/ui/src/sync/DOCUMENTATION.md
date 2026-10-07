@@ -1114,5 +1114,9 @@ session record into `getSessionAgentClient`; backend selection controls drafts
 only. Unknown sessions do not inherit the draft backend. ACP clients capture a
 runtime at construction and reject later requests on another runtime. ACP model
 responses and availability probes are discarded after a runtime switch.
+The ACP new-chat model picker uses the selected draft agent and omits the
+session ID when reading or changing its model. Its `acp-new-session` cache key
+never reaches the server as a session ID. Existing-session model pickers still
+resolve the session's owner, including when a different draft agent is selected.
 Qualified navigation validates backend ownership after loading the target host's
 sessions. Native and desktop notification taps carry their saved runtime owner.
