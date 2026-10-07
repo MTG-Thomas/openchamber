@@ -108,3 +108,93 @@ No automated merge until the resulting candidate has the normal review gates.
 Generally upstreamable: identity types, qualified links, instance-scoped storage,
 notification routing, narrow backend seams, ACP and the unified index/sidebar.
 Fork-specific: Muse examples, fork integration scheduling and our patch inventory.
+
+## Implemented spike contracts
+
+`OPENCHAMBER_ACP_ENABLED=1` enables ACP on a host; OpenCode stays the draft
+default. Server configuration is discoverable by authenticated clients through
+`/api/agent/acp/status`. ACP settings persist per runtime. A selected draft backend
+never decides who owns an existing session. ACP control requests include agent
+and session identity, and refuse obsolete owners. One ACP agent process/turn is
+supported per server; creating another session while busy returns a visible error.
+
+Build with `VITE_OPENCHAMBER_MULTIRUNTIME=1` to show the aggregate tree above
+the existing foreground sidebar (or inside the mobile sessions drawer). Desktop
+uses its configured hosts. Capacitor uses existing saved device identities,
+Keychain tokens and direct/relay probes. Browser exposes its current instance.
+The registry holds summaries, opens no terminals or MCP project locations, and
+uses a separate authenticated HTTP/SSE transport for each host. Failure retains
+prior summaries with a retry control. Suspension closes client observations;
+resume reloads authoritative snapshots. A server turn continues while iOS sleeps.
+
+ACP events use the existing event hub, numbered replay and supplemental global
+SSE stream, so native clients do not need a desktop-only event path. Notification
+registration records the saved-host identity for each mobile device; each push
+returns that device's identity and the session backend. Desktop notifications and
+copied message links include the owner. Links can activate an already-configured
+runtime; they cannot import endpoints or credentials. Legacy links remain valid.
+
+Enterprise mode refuses ACP at the server boundary because agent provider
+configuration is outside managed OpenCode. Settings displays the reason.
+
+`fork-upstream-sync.yml` runs weekly after landing on the fork default branch.
+It merges upstream into a generated integration branch, reports overlapping patch
+files, and creates/updates a fork PR. Conflict branches contain only a report;
+there is no automatic semantic resolution. Successful candidates explicitly
+invoke `fork-checks.yml`, since PRs created by GITHUB_TOKEN do not trigger normal
+PR workflows. Shared checks use GitHub-hosted Linux; the same fork checks also
+build the iOS simulator on macOS. Neither workflow automatically merges.
+
+## Remaining limits
+
+Runtime keys currently follow each client's existing saved-host IDs (and the
+browser's URL-derived instance key). A qualified desktop link therefore needs
+an equivalent configured owner on the receiving client; it cannot automatically
+map a desktop host ID onto an independently paired iPhone. Mobile pushes avoid
+that ambiguity by returning the receiving device's own saved-host ID. Portable
+server-identity aliasing is a follow-up, not an endpoint-discovery mechanism.
+
+The aggregate index and reference format support equal native IDs across hosts
+and backends. Existing foreground session stores still use native IDs within
+one active runtime. ACP-native IDs colliding with OpenCode IDs on the same host
+are refused with an explicit conflict error before reads or ACP controls; opening
+both requires an aliasing boundary. The spike does not migrate all OpenCode
+foreground stores. If OpenCode is unavailable, ownership verification fails
+visibly rather than guessing the backend. ACP agent selection is currently
+one process/agent per server. These are explicit limits of the spike, not a
+claim that every backend capability or identity migration is finished.
+
+## Verification ledger
+
+Local Linux verification on OpenChamber 2.1.1 / mobile package 1.13.2:
+
+- Full UI suite: 766/766 files. SDK: 22/22; VS Code: 59/59; Electron:
+  35/35; scripts: 10/10. Web on Node 24: 378 passed, 9 skipped files,
+  6,565 passing tests. Subsequent ownership HTTP tests and ACP notification
+  content tests pass independently.
+- Workspace type-check and lint pass (six existing UI lint warnings).
+  Full workspace build and refreshed web/mobile assets pass.
+- Two real HTTP fixture servers verify separate credentials, equal native
+  session/project IDs, owner activation and isolated host failure.
+- Real `muse-acp` 0.7.0: OpenChamber HTTP create/prompt/global SSE complete
+  successfully with streamed text and six tool calls. Built desktop web UI
+  renders tool activity; a live cancel request succeeds. Hosted mobile at
+  390×844 loads the ACP transcript after navigation with no horizontal overflow.
+- Deterministic ACP fixtures cover permission replies, cancellation,
+  numbered event replay, obsolete owners, busy-agent refusal, enterprise
+  refusal and ambiguous backend IDs. APNs fixtures verify recipient-specific
+  runtime ownership.
+- Upstream intake tests use real isolated Git repositories and stub only the
+  external upstream URL/GitHub command boundary. Clean merges dispatch checks;
+  semantic conflicts produce a report without integrating conflicted code.
+- Dead-code review retains public identity primitives and the dynamically
+  launched ACP fixture. Targeted anti-slop checks pass for the newly authored
+  identity/index/connection/ownership/automation modules. The harvested ACP
+  code retains existing manual wire-shape checks; these are not a claim of a
+  repository-wide anti-slop cleanup.
+
+GitHub fork checks include Linux shared gates and the macOS simulator build.
+Native iOS runtime flows remain unverified locally: direct/relay pairing,
+Keychain, APNs delivery/taps, permissions, suspend/resume and simultaneous
+saved-host connections require a simulator/device acceptance run. Hosted
+Chromium mobile proof does not establish WKWebView behavior.
