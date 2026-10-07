@@ -88,9 +88,10 @@ These modules hold reusable, non-presentational logic for commands.
     in the running app can observe a torn file), a strict read that throws on
     corrupt/unreadable payloads, and the same `0600` file mode.
   - The strict read gates relay identity regeneration exactly like the server
-    runtime: a swallowed read failure can never mint a replacement signing or
-    encryption keypair, which would change `serverId` and orphan every paired
-    device and push binding.
+    runtime (`server/lib/relay/key-store.js`, which may still find legacy keys
+    in settings.json): a swallowed read failure can never mint a replacement
+    signing or encryption keypair, which would change `serverId` and orphan
+    every paired device and push binding.
 
 - `cli-process.js`
   - PID files, instance registry files, process identity checks, runtime metadata checks, and process termination helpers.
