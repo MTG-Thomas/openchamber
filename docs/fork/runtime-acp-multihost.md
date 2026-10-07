@@ -127,6 +127,10 @@ uses a separate authenticated HTTP/SSE transport for each host. Failure retains
 prior summaries with a retry control. Suspension closes client observations;
 resume reloads authoritative snapshots. A server turn continues while iOS sleeps.
 
+OpenCode-only permission automation, follow-up queues, dispatch results and
+message search receive only events owned by OpenCode. ACP tools and permission
+requests cannot trigger those consumers with a foreign native ID.
+
 ACP events use the existing event hub, numbered replay and supplemental global
 SSE stream, so native clients do not need a desktop-only event path. Notification
 registration records the saved-host identity for each mobile device; each push

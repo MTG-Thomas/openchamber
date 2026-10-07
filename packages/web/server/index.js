@@ -1,3 +1,4 @@
+import { createOpenCodeAutomationEventHub } from './lib/event-stream/opencode-automation-hub.js';
 import { isAcpEnabled } from './lib/acp/env.js';
 import { stopAcpRuntime } from './lib/acp/routes.js';
 import { installOpenCodeV2, supportsOpenCodeV2Install } from './lib/opencode/v2-install.js';
@@ -1032,6 +1033,8 @@ const globalMessageStreamHub = createGlobalMessageStreamHub({
   deltaCoalesceWindowMs: resolveDeltaCoalesceWindowMs(),
 });
 
+const openCodeAutomationEventHub = createOpenCodeAutomationEventHub(globalMessageStreamHub);
+
 // Jev model routing and the permission safety net. Every failure keeps the
 // user's own model or the auto-accept reply it was asked about.
 const routingRuntime = createRoutingRuntime({
@@ -1056,7 +1059,7 @@ const sessionWorkRuntime = createSessionWorkRuntime({
 });
 
 const permissionAutoAcceptRuntime = createPermissionAutoAcceptRuntime({
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   readSettingsFromDiskMigrated,
@@ -1076,7 +1079,7 @@ notificationTriggerRuntime.setGetIsSessionAutoAccepting(
 // Queued follow-up messages are delivered by the server so a closed tab or a
 // dropped connection no longer strands them (VS Code keeps its UI-side queue).
 const messageQueueRuntime = createMessageQueueRuntime({
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   sessionKnowledgeRuntime,
@@ -1092,7 +1095,7 @@ messageQueueRuntime.start();
 // Sessions an agent dispatched with `returnResult` report back to it: their
 // final answer lands in the dispatching session and wakes it.
 const dispatchResultsRuntime = createDispatchResultsRuntime({
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   dataDir: OPENCHAMBER_DATA_DIR,
@@ -1108,7 +1111,7 @@ const messageSearchRuntime = createMessageSearchRuntime({
   dataDir: OPENCHAMBER_DATA_DIR,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   readSettings: async () => {
     const settings = await readSettingsFromDisk();
     return { enabled: settings.messageSearchEnabled === true, reasoning: settings.messageSearchReasoningEnabled === true };
