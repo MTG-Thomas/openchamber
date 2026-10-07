@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import fsPromises from 'fs/promises';
 import os from 'os';
@@ -287,6 +287,7 @@ describe('skills', () => {
     const skillDir = path.join(projectRoot, '.opencode', 'skills', 'rollback-skill');
     const skillPath = path.join(skillDir, 'SKILL.md');
     const body = '# Rollback body\n\nMust remain in the original directory.';
+    let failingWrite;
 
     try {
       await fsPromises.mkdir(skillDir, { recursive: true });
@@ -303,7 +304,12 @@ describe('skills', () => {
         ].join('\n'),
         'utf8',
       );
-      await fsPromises.chmod(skillPath, 0o444);
+      const writeFile = fs.writeFileSync;
+      const renamedPath = path.join(projectRoot, '.opencode', 'skills', 'rollback-skill-renamed', 'SKILL.md');
+      failingWrite = vi.spyOn(fs, 'writeFileSync').mockImplementation((target, ...args) => {
+        if (target === renamedPath) throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+        return writeFile(target, ...args);
+      });
 
       expect(() => renameSkill('rollback-skill', 'rollback-skill-renamed', projectRoot)).toThrow();
 
@@ -311,6 +317,7 @@ describe('skills', () => {
       expect(fs.existsSync(path.join(projectRoot, '.opencode', 'skills', 'rollback-skill-renamed'))).toBe(false);
       expect(await fsPromises.readFile(skillPath, 'utf8')).toContain(body);
     } finally {
+      failingWrite?.mockRestore();
       try {
         await fsPromises.chmod(skillPath, 0o644);
       } catch {

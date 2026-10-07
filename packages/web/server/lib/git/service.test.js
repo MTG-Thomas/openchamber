@@ -2759,6 +2759,8 @@ describe('git remote arguments with option-like names', () => {
     const head = runGit(repository, ['rev-parse', 'HEAD']).trim();
     runGit(repository, ['update-ref', `refs/remotes/${OPTION_LIKE_REMOTE}/gone`, head]);
 
+    // Default-branch discovery reads authoritative local symbolic refs.
+    runGit(repository, ['symbolic-ref', `refs/remotes/${OPTION_LIKE_REMOTE}/HEAD`, `refs/remotes/${OPTION_LIKE_REMOTE}/react`]);
     const branches = await getBranches(repository);
 
     expect(branches.all).toContain(`remotes/${OPTION_LIKE_REMOTE}/react`);
