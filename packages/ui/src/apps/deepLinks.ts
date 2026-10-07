@@ -10,6 +10,7 @@
  * context — including, eventually, a tiny encoder shared with the native widget/extension.
  */
 
+import { parseSessionOwner, type SessionRef } from '@/lib/runtime-identity';
 import { isLinkIdentifier } from '@/lib/router/messageFocus';
 
 const DEEP_LINK_SCHEME = 'openchamber';
@@ -23,7 +24,7 @@ export type ViewTarget = 'files' | 'mcp' | 'instances' | 'update';
  * that keeps the "blocks" composable without leaking ad-hoc URL parsing into features.
  */
 export type DeepLinkIntent =
-  | { type: 'session'; sessionId: string; directory?: string; messageId?: string }
+  | { type: 'session'; owner?: SessionRef; sessionId: string; directory?: string; messageId?: string }
   | { type: 'new-session'; directory?: string; projectId?: string; agent?: string; model?: string }
   | { type: 'sessions'; filter?: SessionsFilter }
   | { type: 'status' }
@@ -78,12 +79,13 @@ export function parseDeepLink(raw: string | null | undefined): DeepLinkIntent | 
       }
       // A message link (`?message=<id>`) also names the message to show.
       const messageId = query.get('message')?.trim() ?? '';
-      return {
-        type: 'session',
-        sessionId,
-        directory: query.get('dir') ?? undefined,
-        ...(isLinkIdentifier(messageId) ? { messageId } : {}),
-      };
+      const qualified = query.has('runtime') || query.has('backend');
+      const owner = qualified ? parseSessionOwner(query, sessionId) : null;
+      if (qualified && !owner) return null;
+      const intent: DeepLinkIntent = { type: 'session', sessionId, directory: query.get('dir') ?? undefined };
+      if (owner) intent.owner = owner;
+      if (isLinkIdentifier(messageId)) intent.messageId = messageId;
+      return intent;
     }
 
     case 'new':

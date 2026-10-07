@@ -1,12 +1,15 @@
 import { ensureGlobalSessionsLoaded, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import type { SessionRef } from '@/lib/runtime-identity';
 import { requestMessageFocus } from './messageFocus';
 
 /**
  * Opens a session link and, for a message link, asks the session's timeline
  * to show that message: on entry, or right away if the session is open.
  */
-export function openSessionLink(sessionId: string, messageId: string | null): Promise<void> {
+export function openSessionLink(sessionId: string, messageId: string | null, owner?: SessionRef): Promise<void> {
+  if (owner && (owner.runtimeId !== getRuntimeKey() || owner.sessionId !== sessionId)) return Promise.resolve();
   if (messageId) requestMessageFocus(sessionId, messageId);
   return openSessionFromRoute(sessionId);
 }

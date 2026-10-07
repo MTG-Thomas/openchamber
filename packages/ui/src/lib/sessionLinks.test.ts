@@ -54,3 +54,13 @@ describe('parseSessionLink', () => {
         expect(isSessionDeepLink('https://chamber.example/?session=ses_a')).toBe(false);
     });
 });
+
+ test('round-trips qualified native and web links without inventing an owner for legacy links', () => {
+    const owner = { runtimeId: 'remote:homelab', backendId: 'acp:muse', sessionId: 'ses_a', projectId: '/repo' };
+    for (const form of [{ kind: 'deep-link' } as const, { kind: 'web', origin: 'https://chamber.example', pathname: '/oc/' } as const]) {
+        const link = buildMessageLink('ses_a', 'msg_1', form, owner);
+        if (!link) throw new Error('Link was not built');
+        expect(parseSessionLink(link, ['https://chamber.example'])).toEqual({ sessionId: 'ses_a', messageId: 'msg_1', owner });
+    }
+    expect(parseSessionLink('openchamber://session/ses_a?runtime=remote', [])).toBeNull();
+ });

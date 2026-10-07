@@ -107,7 +107,7 @@ const useLinkInteractions = ({
       openAppLink: (href) => void openAppLinkWithConfirmation(href),
       openExternalHttp: (href) => void openExternalUrl(href),
       openSessionLink: opensSessionLinks
-        ? (target) => void openSessionLink(target.sessionId, target.messageId)
+        ? (target) => void openSessionLink(target.sessionId, target.messageId, target.owner)
         : undefined,
       ownOrigins: resolveOwnOrigins(),
     });
