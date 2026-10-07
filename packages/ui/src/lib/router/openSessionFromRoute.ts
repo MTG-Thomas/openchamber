@@ -1,3 +1,5 @@
+import { acpSessionOwnerSchema } from '@/lib/agent/types';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { ensureGlobalSessionsLoaded, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { getRuntimeKey } from '@/lib/runtime-switch';
@@ -8,8 +10,25 @@ import { requestMessageFocus } from './messageFocus';
  * Opens a session link and, for a message link, asks the session's timeline
  * to show that message: on entry, or right away if the session is open.
  */
-export function openSessionLink(sessionId: string, messageId: string | null, owner?: SessionRef): Promise<void> {
-  if (owner && (owner.runtimeId !== getRuntimeKey() || owner.sessionId !== sessionId)) return Promise.resolve();
+export async function openSessionLink(sessionId: string, messageId: string | null, owner?: SessionRef): Promise<void> {
+  if (owner && owner.sessionId !== sessionId) return;
+  if (owner && owner.runtimeId !== getRuntimeKey()) {
+    const { loadConfiguredRuntimes, unifiedRuntimesEnabled } = await import('../runtimes/configured');
+    if (!unifiedRuntimesEnabled) return;
+    const { runtimeRegistry } = await import('../runtimes/registry');
+    await loadConfiguredRuntimes();
+    await runtimeRegistry.refresh(owner.runtimeId);
+    await runtimeRegistry.activate(owner);
+  }
+  if (owner) {
+    await ensureGlobalSessionsLoaded();
+    if (owner.runtimeId !== getRuntimeKey()) return;
+    const session = useGlobalSessionsStore.getState().entityById.get(sessionId);
+    if (!session) return;
+    const acp = acpSessionOwnerSchema.safeParse(session.metadata?.openchamber);
+    const backendId = acp.success ? `acp:${acp.data.agentId}` : 'opencode';
+    if (backendId !== owner.backendId) return;
+  }
   if (messageId) requestMessageFocus(sessionId, messageId);
   return openSessionFromRoute(sessionId);
 }

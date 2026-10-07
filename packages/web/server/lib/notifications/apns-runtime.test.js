@@ -309,3 +309,19 @@ describe('apns runtime direct fallback (relay disabled)', () => {
     expect(JSON.parse(Buffer.from(parts[1], 'base64url').toString()).iss).toBe('TEAM123');
   });
 });
+
+it('returns each device own saved-host identity without mixing registrations', async () => {
+  const sends = [];
+  vi.stubGlobal('fetch', async (url, init) => {
+    if (isSend([url])) sends.push(JSON.parse(init.body));
+    return jsonResponse({ ok: true, results: [] });
+  });
+  process.env.OPENCHAMBER_PUSH_RELAY_URL = 'https://relay.test/v1/push/send';
+  const runtime = createApnsRuntime(makeDeps());
+  await runtime.addOrUpdateApnsToken('ui-one', 'device-one', 'test', 'ios', 'sandbox', undefined, 'host:one');
+  await runtime.addOrUpdateApnsToken('ui-two', 'device-two', 'test', 'ios', 'sandbox', undefined, 'host:two');
+  await runtime.sendApnsToAllUiSessions({ title: 'Ready', data: { sessionId: 'same', backendId: 'acp:muse' } });
+  expect(sends.map((send) => [send.tokens[0], send.data.runtimeId, send.data.backendId])).toEqual([
+    ['device-one', 'host:one', 'acp:muse'], ['device-two', 'host:two', 'acp:muse'],
+  ]);
+});

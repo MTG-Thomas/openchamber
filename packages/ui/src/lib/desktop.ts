@@ -1,3 +1,4 @@
+import { sessionRefSchema, type SessionRef } from './runtime-identity';
 import { z } from 'zod';
 import type { RuntimeAPIs } from '@/lib/api/types';
 import { getInjectedBootOutcome } from '@/lib/desktopBoot';
@@ -443,11 +444,12 @@ export const canRequestNativeDirectoryAccess = (): boolean => (
 );
 
 const pendingSessionLinksSchema = z.array(z.object({
+  owner: sessionRefSchema.optional(),
   sessionId: z.string().min(1),
   messageId: z.string().min(1).optional(),
 }));
 
-type PendingDesktopSessionLink = { sessionId: string; messageId: string | null };
+type PendingDesktopSessionLink = { sessionId: string; messageId: string | null; owner?: SessionRef };
 
 /**
  * Session links (`openchamber://session/...`) that reached the desktop app
@@ -460,7 +462,7 @@ export const takePendingDesktopSessionLinks = async (): Promise<PendingDesktopSe
   try {
     const parsed = pendingSessionLinksSchema.safeParse(await invokeDesktop('desktop_take_pending_session_links'));
     return parsed.success
-      ? parsed.data.map((link) => ({ sessionId: link.sessionId, messageId: link.messageId ?? null }))
+      ? parsed.data.map((link) => ({ sessionId: link.sessionId, messageId: link.messageId ?? null, owner: link.owner }))
       : [];
   } catch (error) {
     console.warn('Failed to read pending session links', error);

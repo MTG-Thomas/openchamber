@@ -1,3 +1,4 @@
+import { acpSessionOwnerSchema } from '@/lib/agent/types';
 /* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react"
 import type { StoreApi } from "zustand"
@@ -633,12 +634,17 @@ const handleUiNotificationEvent = (notification: OpenchamberNotification, fallba
   const notifications = getRegisteredRuntimeAPIs()?.notifications
   if (!notifications?.notifyAgentCompletion) return
 
+  const metadata = sessionId ? useGlobalSessionsStore.getState().entityById.get(sessionId)?.metadata : undefined
+  const acpOwner = acpSessionOwnerSchema.safeParse(metadata?.openchamber)
+  const owner = sessionId ? { runtimeId: getRuntimeKey(), backendId: acpOwner.success ? `acp:${acpOwner.data.agentId}` : 'opencode', sessionId } : undefined
+
   void notifications.notifyAgentCompletion({
     title,
     body,
     tag,
     kind,
     sessionId,
+    owner,
     directory: directory || undefined,
     requireHidden: notification.kind === "plugin" ? true : notification.requireHidden === true,
   }).catch((error) => {

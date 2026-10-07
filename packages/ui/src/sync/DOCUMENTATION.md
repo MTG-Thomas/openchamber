@@ -1104,3 +1104,15 @@ const useViewportStore = create(() => ({ scrollAnchor: 0 }))
 const useSelectionStore = create(() => ({ selectedModel: null }))
 const useInputStore = create(() => ({ pendingInput: "" }))
 ```
+
+### Fork runtime/backend ownership
+
+The opt-in aggregate index (`lib/runtimes`) stores qualified session summaries,
+not transcripts. Foreground stores are still reset by the existing runtime
+switch lifecycle. `session-actions` and `session-ui-store` pass the authoritative
+session record into `getSessionAgentClient`; backend selection controls drafts
+only. Unknown sessions do not inherit the draft backend. ACP clients capture a
+runtime at construction and reject later requests on another runtime. ACP model
+responses and availability probes are discarded after a runtime switch.
+Qualified navigation validates backend ownership after loading the target host's
+sessions. Native and desktop notification taps carry their saved runtime owner.

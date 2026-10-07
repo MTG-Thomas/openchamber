@@ -1,3 +1,5 @@
+import { hasAcpSession } from '../acp/session-registry.js';
+import { getStartupAcpConfig } from '../acp/env.js';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 import { createSessionActivityProbe } from '../opencode/session-activity.js';
 import { isEnterpriseMode } from '../enterprise-mode.js';
@@ -92,7 +94,8 @@ export const createNotificationTriggerRuntime = (deps) => {
       badge: trackPushAndCountBadge(typeof payload?.tag === 'string' ? payload.tag : undefined),
       tag: payload?.tag,
       // sessionId is forwarded so a tapped push can deep-link; it is an opaque id, not content.
-      data: typeof data.sessionId === 'string' ? { sessionId: data.sessionId } : undefined,
+      data: typeof data.sessionId === 'string' ? { sessionId: data.sessionId,
+        backendId: hasAcpSession(data.sessionId) ? `acp:${getStartupAcpConfig()?.agentId || 'acp-agent'}` : 'opencode' } : undefined,
     };
   };
 

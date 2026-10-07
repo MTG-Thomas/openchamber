@@ -1249,7 +1249,7 @@ const maybeShowNativeNotification = (rawInput) => {
   notification.on('click', () => {
     focusForegroundWindow();
     if (sessionId) {
-      emitToPrimaryWindow('openchamber:open-session', { sessionId, directory });
+      emitToPrimaryWindow('openchamber:open-session', { sessionId, directory, owner: payload.owner });
     }
     release();
   });
@@ -1742,6 +1742,12 @@ const PENDING_SESSION_LINK_FALLBACK_MS = 10_000;
 
 // Hands the main window's renderer the session links that arrived before it
 // could listen, as { sessionId, messageId? }; the renderer validates both.
+const ownerForDeepLink = (raw, sessionId) => {
+  const runtimeId = readDeepLinkQueryParam(raw, 'runtime');
+  const backendId = readDeepLinkQueryParam(raw, 'backend');
+  return runtimeId || backendId ? { runtimeId, backendId, sessionId } : undefined;
+};
+
 const takePendingSessionDeepLinks = () => {
   const taken = [];
   for (let index = pendingDeepLinks.length - 1; index >= 0; index -= 1) {
@@ -1749,7 +1755,7 @@ const takePendingSessionDeepLinks = () => {
     if (link.type !== 'session' || !link.value) continue;
     pendingDeepLinks.splice(index, 1);
     const messageId = readDeepLinkQueryParam(link.raw, 'message');
-    taken.unshift(messageId ? { sessionId: link.value, messageId } : { sessionId: link.value });
+    taken.unshift({ sessionId: link.value, ...(messageId ? { messageId } : {}), owner: ownerForDeepLink(link.raw, link.value) });
   }
   return taken;
 };
@@ -2037,9 +2043,7 @@ const dispatchDeepLink = (link) => {
     // A message link (`openchamber://session/<id>?message=<id>`) also names
     // the message to show; the renderer validates both IDs.
     const messageId = readDeepLinkQueryParam(link.raw, 'message');
-    emitToPrimaryWindow('openchamber:open-session', messageId
-      ? { sessionId: link.value, messageId }
-      : { sessionId: link.value });
+    emitToPrimaryWindow('openchamber:open-session', { sessionId: link.value, ...(messageId ? { messageId } : {}), owner: ownerForDeepLink(link.raw, link.value) });
     return;
   }
   if (link.type === 'host' && link.value) {

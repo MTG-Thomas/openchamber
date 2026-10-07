@@ -1,3 +1,4 @@
+import type { SessionRef } from '@/lib/runtime-identity';
 import type { SidebarSection } from '@/constants/sidebar';
 
 /**
@@ -5,6 +6,7 @@ import type { SidebarSection } from '@/constants/sidebar';
  * All fields are nullable - null means "not specified in URL" (use app defaults).
  */
 export interface RouteState {
+  owner?: SessionRef;
   /** Session ID to navigate to */
   sessionId: string | null;
   /** Message to show in that session (a message link); only with a session */

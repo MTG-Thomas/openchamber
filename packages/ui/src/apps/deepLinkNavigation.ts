@@ -1,6 +1,6 @@
+import { sessionRefSchema } from '@/lib/runtime-identity';
 import React from 'react';
 
-import { getRuntimeKey } from '@/lib/runtime-switch';
 import { isCapacitorApp } from '@/lib/platform';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { requestMessageFocus } from '@/lib/router/messageFocus';
@@ -39,10 +39,10 @@ let pending: DeepLinkIntent | null = null;
 const execute = (intent: DeepLinkIntent): boolean => {
   switch (intent.type) {
     case 'session':
-      if (intent.owner && intent.owner.runtimeId !== getRuntimeKey()) return false;
+
       // A message link carries no directory; the route opener resolves it.
-      if (intent.messageId && !intent.directory) {
-        void openSessionLink(intent.sessionId, intent.messageId, intent.owner);
+      if (intent.owner || (intent.messageId && !intent.directory)) {
+        void openSessionLink(intent.sessionId, intent.messageId ?? null, intent.owner);
         return true;
       }
       if (intent.messageId) requestMessageFocus(intent.sessionId, intent.messageId);
@@ -185,7 +185,11 @@ export const useDeepLinkSource = (options: { ready: boolean }): void => {
           }
           const sessionId = typeof data?.sessionId === 'string' ? data.sessionId : undefined;
           if (sessionId) {
-            applyDeepLinkIntent({ type: 'session', sessionId });
+            const owner = sessionRefSchema.safeParse({ runtimeId: data?.runtimeId, backendId: data?.backendId, sessionId });
+            // A partially qualified tap is unsafe; legacy unqualified payloads still work.
+            if (data?.runtimeId || data?.backendId) {
+              if (owner.success) applyDeepLinkIntent({ type: 'session', sessionId, owner: owner.data });
+            } else applyDeepLinkIntent({ type: 'session', sessionId });
           }
         });
         if (disposed) {
