@@ -581,7 +581,7 @@ it('keeps explicitly owned ACP controls available during an OpenCode outage', as
   offline = true;
   expect((await request(app, 'post', '/api/agent/acp/session/cancel', {
     agentId: 'mock', sessionID: init.body.sessionID,
-  })).statusCode).toBe(200);
+  })).statusCode).toBe(202);
   expect((await request(app, 'post', '/api/agent/acp/session/cancel', {
     agentId: 'obsolete', sessionID: init.body.sessionID,
   })).statusCode).toBe(409);
