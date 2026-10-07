@@ -189,43 +189,46 @@ export const acpUpdateToEvents = (params, ctx = {}, acc = { messageID: null, ful
     return out;
   }
 
+  let toolCallId = update.toolCallId;
   if (kind === 'tool_call') {
-    const toolCallId = update.toolCallId || hexId('tool');
-    acc.toolIds = acc.toolIds || new Set();
-    acc.toolIds.add(toolCallId);
-    ensureAssistantMessage(ctx, acc, out);
-    out.push(wireEvent('session.tool.input.started', {
-      sessionID,
-      assistantMessageID: acc.messageID,
-      id: toolCallId,
-      name: update.title || update.kind || 'tool',
-    }, ctx.location, acc));
-    out.push(wireEvent('session.tool.called', {
-      sessionID,
-      assistantMessageID: acc.messageID,
-      id: toolCallId,
-      input: toolInput(update),
-      executed: true,
-    }, ctx.location, acc));
+    toolCallId ||= hexId('tool');
     acc.toolCalls = acc.toolCalls || new Map();
-    const toolEntry = {
-      id: toolCallId,
-      name: update.title || update.kind || 'tool',
-      input: toolInput(update),
-      status: 'running',
-      output: toolContentText(update),
-      metadata: isRecord(update._meta) ? update._meta : undefined,
-      created: Date.now(),
-      ran: Date.now(),
-    };
-    acc.toolCalls.set(toolCallId, toolEntry);
-    acc.items = acc.items ?? [];
-    acc.items.push({ type: 'tool', ref: toolEntry });
-    return out;
+    if (!acc.toolCalls.has(toolCallId)) {
+      acc.toolIds = acc.toolIds || new Set();
+      acc.toolIds.add(toolCallId);
+      ensureAssistantMessage(ctx, acc, out);
+      out.push(wireEvent('session.tool.input.started', {
+        sessionID,
+        assistantMessageID: acc.messageID,
+        id: toolCallId,
+        name: update.title || update.kind || 'tool',
+      }, ctx.location, acc));
+      out.push(wireEvent('session.tool.called', {
+        sessionID,
+        assistantMessageID: acc.messageID,
+        id: toolCallId,
+        input: toolInput(update),
+        executed: true,
+      }, ctx.location, acc));
+      const toolEntry = {
+        id: toolCallId,
+        name: update.title || update.kind || 'tool',
+        input: toolInput(update),
+        status: 'running',
+        output: '',
+        metadata: isRecord(update._meta) ? update._meta : undefined,
+        created: Date.now(),
+        ran: Date.now(),
+      };
+      acc.toolCalls.set(toolCallId, toolEntry);
+      acc.items = acc.items ?? [];
+      acc.items.push({ type: 'tool', ref: toolEntry });
+    }
+    // Muse sends reminder completion as another full tool_call snapshot.
+    // Share status handling with updates without restarting the same tool.
   }
 
-  if (kind === 'tool_call_update') {
-    const toolCallId = update.toolCallId;
+  if (kind === 'tool_call_update' || kind === 'tool_call') {
     if (!toolCallId) return [];
     acc.toolCalls = acc.toolCalls || new Map();
     const existing = acc.toolCalls.get(toolCallId) ?? {
@@ -237,14 +240,16 @@ export const acpUpdateToEvents = (params, ctx = {}, acc = { messageID: null, ful
       created: Date.now(),
       ran: Date.now(),
     };
+    const status = String(update.status ?? '').toLowerCase();
+    if ((existing.status === 'completed' || existing.status === 'error')
+      && status !== 'completed' && status !== 'failed') return out;
     // pi streams command output through `_meta.terminal_output.data`; append it
-    // so the completed tool carries the whole result.
+    // for delta updates. A full tool_call snapshot replaces that output.
     const streamed = toolContentText(update);
-    if (streamed) existing.output = (existing.output ?? '') + streamed;
+    if (streamed) existing.output = kind === 'tool_call' ? streamed : (existing.output ?? '') + streamed;
     if (isRecord(update.rawInput)) existing.input = update.rawInput;
     if (update.title && !existing.name) existing.name = update.title;
 
-    const status = String(update.status ?? '').toLowerCase();
     if (status === 'failed') {
       if (existing.status !== 'error') {
         existing.status = 'error';
@@ -283,6 +288,7 @@ export const acpUpdateToEvents = (params, ctx = {}, acc = { messageID: null, ful
     // card alive without pretending the call finished.
     existing.status = 'running';
     acc.toolCalls.set(toolCallId, existing);
+    if (kind === 'tool_call') return out;
     out.push(wireEvent('session.tool.progress', {
       sessionID,
       assistantMessageID: acc.messageID ?? '',

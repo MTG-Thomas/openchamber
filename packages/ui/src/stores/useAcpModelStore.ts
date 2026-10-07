@@ -12,8 +12,11 @@ import { getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-sw
 // to the agent badge and the per-reply footer still names the model in use.
 
 import { create } from 'zustand';
-import { getSessionAgentClient } from '@/lib/agent/active-client';
+import { getActiveAgentClient, getSessionAgentClient } from '@/lib/agent/active-client';
 import type { AgentModelConfig } from '@/lib/agent/types';
+
+// Matches AcpModelSelector's draft cache key; it is never an agent session ID.
+const NEW_SESSION_KEY = 'acp-new-session';
 
 type AcpModelStore = {
   /** Agent-reported model select per session id. */
@@ -34,12 +37,14 @@ export const useAcpModelStore = create<AcpModelStore>((set, get) => ({
     if (!sessionId) return;
     set((state) => ({ loading: { ...state.loading, [sessionId]: true } }));
     try {
-      const client = getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId));
+      const draft = sessionId === NEW_SESSION_KEY;
+      const client = draft ? getActiveAgentClient()
+        : getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId));
       if (client.backend !== 'acp' || !client.listModels) {
         set((state) => ({ loading: { ...state.loading, [sessionId]: false } }));
         return;
       }
-      const config = await client.listModels(sessionId);
+      const config = await client.listModels(draft ? '' : sessionId);
       if (runtimeId !== getRuntimeKey()) return;
       set((state) => ({
         // `null` is a valid "this agent reports no model select", not a failure:
@@ -64,9 +69,11 @@ export const useAcpModelStore = create<AcpModelStore>((set, get) => ({
       bySession: { ...state.bySession, [sessionId]: { ...current, currentValue: value } },
     }));
     try {
-      const client = getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId));
+      const draft = sessionId === NEW_SESSION_KEY;
+      const client = draft ? getActiveAgentClient()
+        : getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId));
       if (client.backend !== 'acp' || !client.setModel) throw new Error('ACP model owner is unavailable');
-      const updated = await client.setModel(sessionId, current.configId, value);
+      const updated = await client.setModel(draft ? '' : sessionId, current.configId, value);
       if (runtimeId !== getRuntimeKey()) return;
       if (updated) {
         set((state) => ({ bySession: { ...state.bySession, [sessionId]: updated } }));

@@ -4,6 +4,7 @@ import {
   acpStopReasonToSessionStatus,
   acpErrorToSessionStatus,
   acpTurnStartedToEvents,
+  assistantContentFromAcc,
   resetReplayCounters,
   _resetTranslateCounter,
 } from './acp-translate.js';
@@ -111,6 +112,37 @@ describe('acp-translate: tool_call (TC-4)', () => {
       freshAcc(),
     );
     expect(events).toEqual([]);
+  });
+
+  it('finishes repeated Muse reminder snapshots without restarting or duplicating the tool', () => {
+    const acc = freshAcc();
+    const snapshot = (status) => ({ update: {
+      sessionUpdate: 'tool_call', toolCallId: 'reminder-1', title: 'Reminder child session',
+      status, content: [{ type: 'text', text: 'reminder complete' }],
+    } });
+    acpUpdateToEvents(snapshot('in_progress'), ctx(), acc);
+    const done = acpUpdateToEvents(snapshot('completed'), ctx(), acc);
+    expect(done.map((event) => event.type)).toEqual(['session.tool.success']);
+    expect(done[0].data.content).toEqual([{ type: 'text', text: 'reminder complete' }]);
+    expect(assistantContentFromAcc(acc).filter((item) => item.type === 'tool')).toHaveLength(1);
+    expect(assistantContentFromAcc(acc)[0].state.status).toBe('completed');
+    expect(acpUpdateToEvents(snapshot('completed'), ctx(), acc)).toEqual([]);
+    expect(acpUpdateToEvents(snapshot('in_progress'), ctx(), acc)).toEqual([]);
+    expect(assistantContentFromAcc(acc)[0].state.status).toBe('completed');
+    acpUpdateToEvents({ update: { ...snapshot('in_progress').update, content: [{ type: 'text', text: 'stale progress' }] } }, ctx(), acc);
+    expect(assistantContentFromAcc(acc)[0].state.content).toEqual([{ type: 'text', text: 'reminder complete' }]);
+  });
+
+  it('reports an initially completed or failed tool snapshot with its terminal status', () => {
+    for (const status of ['completed', 'failed']) {
+      const acc = freshAcc();
+      const events = acpUpdateToEvents({ update: {
+        sessionUpdate: 'tool_call', toolCallId: 'initial-tool', title: 'Tool', status,
+        content: [{ type: 'text', text: status === 'failed' ? 'tool error' : 'tool output' }],
+      } }, ctx(), acc);
+      expect(events.at(-1).type).toBe(status === 'failed' ? 'session.tool.failed' : 'session.tool.success');
+      expect(assistantContentFromAcc(acc)[0].state.status).toBe(status === 'failed' ? 'error' : 'completed');
+    }
   });
 });
 
