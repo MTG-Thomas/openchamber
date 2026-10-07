@@ -134,7 +134,9 @@ requests cannot trigger those consumers with a foreign native ID.
 ACP events use the existing event hub, numbered replay and supplemental global
 SSE stream, so native clients do not need a desktop-only event path. Notification
 registration records the saved-host identity for each mobile device; each push
-returns that device's identity and the session backend. Desktop notifications and
+returns that device's identity and the session backend. The legacy iOS widget
+`runtimeKey` field carries the same recipient identity, so another host's push
+cannot mark a colliding foreground widget row unread. Desktop notifications and
 copied message links include the owner. Links can activate an already-configured
 runtime; they cannot import endpoints or credentials. Legacy links remain valid.
 
@@ -173,9 +175,8 @@ claim that every backend capability or identity migration is finished.
 Local Linux verification on OpenChamber 2.1.1 / mobile package 1.13.2:
 
 - Full UI suite: 766/766 files. SDK: 22/22; VS Code: 59/59; Electron:
-  35/35; scripts: 10/10. Web on Node 24: 378 passed, 9 skipped files,
-  6,565 passing tests. Subsequent ownership HTTP tests and ACP notification
-  content tests pass independently.
+  35/35; scripts: 10/10. Web on Node 24: 380 passed, 9 skipped files,
+  6,573 passing tests after the ownership and notification fixes.
 - Workspace type-check and lint pass (six existing UI lint warnings).
   Full workspace build and refreshed web/mobile assets pass.
 - Two real HTTP fixture servers verify separate credentials, equal native

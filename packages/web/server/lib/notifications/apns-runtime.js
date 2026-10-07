@@ -552,7 +552,7 @@ export const createApnsRuntime = (deps) => {
   };
 
   const devicePayloadFor = (payload, entry) => {
-    const owned = { ...payload, data: { ...payload?.data, ...(entry.runtimeId ? { runtimeId: entry.runtimeId } : {}) } };
+    const owned = { ...payload, data: { ...payload?.data, ...(entry.runtimeId ? { runtimeId: entry.runtimeId, runtimeKey: entry.runtimeId } : {}) } };
     return entry.pushKey ? sealedPayloadFor(owned, entry.pushKey) : owned;
   };
 

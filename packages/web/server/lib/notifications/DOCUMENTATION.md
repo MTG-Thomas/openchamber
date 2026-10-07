@@ -186,3 +186,7 @@ IDs receive separate payloads, preserving sealed-content delivery when a push
 key exists. This is an opaque navigation identity, never an endpoint or token.
 Older registrations still receive the legacy payload; partially qualified taps
 are refused by the client. Re-registering refreshes the identity.
+
+Native APNs payloads also retain `runtimeKey` as an alias of the recipient-specific
+`runtimeId`. The iOS notification extension uses that existing field to refuse
+marking a session row from another host unread in the widget snapshot.

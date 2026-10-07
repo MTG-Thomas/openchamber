@@ -321,7 +321,7 @@ it('returns each device own saved-host identity without mixing registrations', a
   await runtime.addOrUpdateApnsToken('ui-one', 'device-one', 'test', 'ios', 'sandbox', undefined, 'host:one');
   await runtime.addOrUpdateApnsToken('ui-two', 'device-two', 'test', 'ios', 'sandbox', undefined, 'host:two');
   await runtime.sendApnsToAllUiSessions({ title: 'Ready', data: { sessionId: 'same', backendId: 'acp:muse' } });
-  expect(sends.map((send) => [send.tokens[0], send.data.runtimeId, send.data.backendId])).toEqual([
-    ['device-one', 'host:one', 'acp:muse'], ['device-two', 'host:two', 'acp:muse'],
+  expect(sends.map((send) => [send.tokens[0], send.data.runtimeId, send.data.runtimeKey, send.data.backendId])).toEqual([
+    ['device-one', 'host:one', 'host:one', 'acp:muse'], ['device-two', 'host:two', 'host:two', 'acp:muse'],
   ]);
 });
