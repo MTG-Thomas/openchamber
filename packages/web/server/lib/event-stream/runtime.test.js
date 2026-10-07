@@ -352,7 +352,7 @@ describe('message stream websocket runtime', () => {
     await runtime.close();
   });
 
-  it('closes the websocket and triggers health check on initial upstream unavailable response', async () => {
+  it('keeps the websocket ready on initial upstream unavailable response and triggers health check', async () => {
     const server = new EventEmitter();
     const wsClients = new Set();
     let triggerHealthCheckCalls = 0;
@@ -384,25 +384,23 @@ describe('message stream websocket runtime', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 5));
 
+    // The stream stays useful for locally published events (ACP sessions), so
+    // the client is marked ready immediately and never closed on upstream
+    // failure; only the health check observes the outage.
     expect(socket.sent).toEqual([
       {
-        type: 'error',
-        message: 'OpenCode event stream unavailable (503)',
+        type: 'ready',
+        scope: 'global',
       },
     ]);
-    expect(socket.closeCalls).toEqual([
-      {
-        code: 1011,
-        reason: 'OpenCode event stream unavailable',
-      },
-    ]);
+    expect(socket.closeCalls).toEqual([]);
     expect(triggerHealthCheckCalls).toBe(1);
-    expect(wsClients.size).toBe(0);
+    expect(wsClients.size).toBe(1);
 
     await runtime.close();
   });
 
-  it('closes the websocket without health check when OpenCode URL cannot be built', async () => {
+  it('keeps the websocket ready without health check when OpenCode URL cannot be built', async () => {
     const server = new EventEmitter();
     const wsClients = new Set();
     let triggerHealthCheckCalls = 0;
@@ -438,18 +436,14 @@ describe('message stream websocket runtime', () => {
 
     expect(socket.sent).toEqual([
       {
-        type: 'error',
-        message: 'OpenCode service unavailable',
+        type: 'ready',
+        scope: 'global',
       },
     ]);
-    expect(socket.closeCalls).toEqual([
-      {
-        code: 1011,
-        reason: 'OpenCode service unavailable',
-      },
-    ]);
+    expect(socket.closeCalls).toEqual([]);
     expect(fetchCalls).toBe(0);
     expect(triggerHealthCheckCalls).toBe(0);
+    expect(wsClients.size).toBe(1);
 
     await runtime.close();
   });

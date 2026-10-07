@@ -1777,6 +1777,7 @@ export const dict = {
   'chat.sessionError.noDetails': 'OpenCode n’a fourni aucun détail. Le rapport d’état affiche les erreurs récentes.',
   'chat.sessionError.showStatus': 'Afficher le statut OpenCode',
   'chat.sessionError.noReply': 'OpenCode n\'a pas commencé de réponse à ce message.',
+  'chat.sessionError.noReplyAgent': 'L\'agent n\'a pas commencé de réponse à ce message.',
   'chat.sessionError.interrupted': 'OpenCode a interrompu cette réponse.',
   'chat.longError.expand': 'Afficher l’erreur complète',
   'chat.longError.collapse': 'Afficher moins',

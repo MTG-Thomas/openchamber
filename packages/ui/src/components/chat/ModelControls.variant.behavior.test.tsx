@@ -207,6 +207,7 @@ const useSessionUIStore = create<SessionUIState>(() => ({
 }));
 
 const useUIStore = create(() => ({
+  favoriteAgents: [],
   isMobile: false,
   isModelSelectorOpen: false,
   hiddenModels: [],

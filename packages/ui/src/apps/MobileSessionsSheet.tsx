@@ -1,3 +1,4 @@
+import { UnifiedRuntimeSidebar } from '@/components/session/UnifiedRuntimeSidebar';
 import React from 'react';
 import { useSessionTurnActivity } from '@/sync/global-session-status';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
@@ -1800,6 +1801,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const surfaceContent = (
       <div ref={contentRootRef} className="flex min-h-0 flex-1 flex-col">
         <ScrollShadow ref={scrollerRef} className="min-h-0 flex-1 overflow-y-auto pb-4">
+          <UnifiedRuntimeSidebar onSelected={() => onOpenChange(false)} />
           {/* The search bar scrolls WITH the list (iOS-style): the open-time
               auto-scroll to the current session naturally tucks it away, and
               scrolling to the very top brings it back. */}

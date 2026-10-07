@@ -4,10 +4,7 @@ import { Input } from '@/components/ui/input';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
-/** OpenCode v2 stores an agent colour only as six-digit hex. */
-const AGENT_HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
-
-export const isAgentHexColor = (value: string): boolean => AGENT_HEX_COLOR.test(value);
+import { isAgentHexColor } from './agentColor';
 
 /**
  * Preset agent colours. These are user data written into the agent's config,

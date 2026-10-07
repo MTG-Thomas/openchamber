@@ -58,7 +58,7 @@ export function useRouter(): void {
         // 1. Apply session first (may trigger async operations); a message
         // link also asks the session's timeline to show that message.
         if (route.sessionId) {
-          await openSessionLink(route.sessionId, route.messageId);
+          await openSessionLink(route.sessionId, route.messageId, route.owner);
         }
 
         // 2. Handle settings first because it is a full-screen overlay.

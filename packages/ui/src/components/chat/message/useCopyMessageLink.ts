@@ -1,3 +1,6 @@
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { acpSessionOwnerSchema } from '@/lib/agent/types';
 import React from 'react';
 
 import { toast } from '@/components/ui';
@@ -23,7 +26,10 @@ export const useCopyMessageLink = (sessionId: string | undefined, messageId: str
     const { t } = useI18n();
     return React.useMemo(() => {
         const form = sessionId ? resolveMessageLinkForm() : null;
-        const link = sessionId && form ? buildMessageLink(sessionId, messageId, form) : null;
+        const session = sessionId ? useGlobalSessionsStore.getState().entityById.get(sessionId) : undefined;
+        const acp = acpSessionOwnerSchema.safeParse(session?.metadata?.openchamber);
+        const owner = session ? { runtimeId: getRuntimeKey(), backendId: acp.success ? `acp:${acp.data.agentId}` : 'opencode', sessionId: session.id, projectId: session.projectID } : undefined;
+        const link = sessionId && form ? buildMessageLink(sessionId, messageId, form, owner) : null;
         if (!link) return undefined;
         return () => {
             void copyTextToClipboard(link).then((result) => {

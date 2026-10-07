@@ -1,3 +1,5 @@
+import { getAcpSessionInfo, hasAcpSession } from '../acp/session-registry.js';
+import { getTranscript } from '../acp/session-transcript.js';
 import { summarizeText as summarizeSharedText } from '../text/summarization.js';
 import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
 
@@ -135,6 +137,11 @@ export const createNotificationTemplateRuntime = (deps) => {
 
   const fetchLastAssistantMessageText = async (sessionId, messageId, maxLength = NOTIFICATION_BODY_MAX_CHARS) => {
     if (!sessionId) return '';
+    if (hasAcpSession(sessionId)) {
+      const messages = getTranscript(sessionId).filter(message => message.type === 'assistant');
+      const target = messages.find(message => message.id === messageId) ?? messages.at(-1);
+      return target ? extractTextFromParts(target.content, maxLength) : '';
+    }
 
     try {
       const url = buildOpenCodeUrl(`/api/session/${encodeURIComponent(sessionId)}/message`, '');
@@ -192,6 +199,7 @@ export const createNotificationTemplateRuntime = (deps) => {
 
   const fetchSessionInfo = async (sessionId) => {
     if (!sessionId) return null;
+    if (hasAcpSession(sessionId)) return getAcpSessionInfo(sessionId);
 
     const cached = sessionInfoCache.get(sessionId);
     if (cached && Date.now() - cached.at < SESSION_INFO_CACHE_TTL_MS) {

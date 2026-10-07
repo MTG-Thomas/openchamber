@@ -1,3 +1,4 @@
+import { createOpenCodeSessionOwnershipProbe } from '../acp/open-code-ownership.js';
 import { registerFsRoutes } from '../fs/routes.js';
 import { registerEnvironmentRoutes } from '../environment/routes.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
@@ -10,6 +11,8 @@ import { registerGuestRoutes } from '../guests/routes.js';
 import { registerBuiltInGuests } from '../guests/catalog.js';
 import { extensionsPersistPath } from '../guests/persist.js';
 import { registerGitRoutes } from '../git/routes.js';
+import { registerAcpRoutes, initAcpOnStartup, acpSessionListOverlay, acpSessionInterceptor } from '../acp/routes.js';
+import { isAcpEnabled } from '../acp/env.js';
 import { registerDevServerRoutes } from '../dev-servers/routes.js';
 import { registerMagicPromptRoutes } from '../magic-prompts/routes.js';
 import { registerSessionFoldersRoutes } from '../session-folders/routes.js';
@@ -236,6 +239,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       routingRuntime,
       globalEventHub,
       openchamberVersion,
+      globalMessageStreamHub,
+      setSessionStatus,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -656,6 +661,22 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       },
     });
     registerLinearRoutes(app);
+    // ACP backend (opt-in, gated by OPENCHAMBER_ACP_ENABLED; OpenCode default).
+    // The routes register either way: each answers 404 while ACP is disabled,
+    // and `/api/agent/acp/status` reports the flag to the UI.
+    registerAcpRoutes(app, { globalMessageStreamHub, setSessionStatus,
+      openCodeSessionExists: createOpenCodeSessionOwnershipProbe({ buildOpenCodeUrl, getOpenCodeAuthHeaders }),
+    });
+    if (isAcpEnabled()) {
+      // ACP sessions do not exist in OpenCode: serve them in session lists
+      // (so list snapshots keep them) and answer by-id requests for them
+      // ahead of the OpenCode proxy, which would reject their foreign ids.
+      app.use('/api', acpSessionListOverlay);
+      app.use('/api', acpSessionInterceptor);
+      // Initialize the agent at startup if config is available. Fire-and-forget
+      // so route registration isn't blocked while the agent spawns.
+      void initAcpOnStartup(globalMessageStreamHub, setSessionStatus);
+    }
     registerDevServerRoutes(app, { scanner: devServerScanner, getOwnPorts });
     registerMagicPromptRoutes(app, {
       fsPromises,

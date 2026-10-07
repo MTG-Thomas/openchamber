@@ -1,3 +1,4 @@
+import { refreshAcpAvailability } from '@/stores/useAgentBackendStore';
 import { OpenCodeCompatibilityGate } from '@/components/update/OpenCodeCompatibilityGate';
 import React from 'react';
 
@@ -104,6 +105,7 @@ const MOBILE_SETTINGS_PAGES = [
   'git',
   'magic-prompts',
   'snippets',
+  'agent-backend',
   'behavior',
   'agents',
   'commands',
@@ -795,6 +797,10 @@ function MobileAppContent({ apis }: MobileAppProps) {
   const [connectionEpoch, setConnectionEpoch] = React.useState(0);
   const [runtimeEndpointEpoch, setRuntimeEndpointEpoch] = React.useState(0);
   const [showConnectionRecovery, setShowConnectionRecovery] = React.useState(false);
+  React.useEffect(() => {
+    if (isConnected) void refreshAcpAvailability();
+  }, [isConnected, connectionEpoch, runtimeEndpointEpoch]);
+
   // Cold-launch auto-connect to the last instance: 'pending'/'attempting' hold the
   // splash so we don't flash the connect screen; 'done' means we either connected or
   // exhausted the attempt (then the connect screen shows).

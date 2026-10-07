@@ -1,3 +1,4 @@
+import { parseSessionOwner } from '@/lib/runtime-identity';
 import {
   type RouteState,
   type RouteTab,
@@ -14,13 +15,19 @@ import { isLinkIdentifier } from './messageFocus';
 export function parseRoute(searchParams?: URLSearchParams): RouteState {
   const params = searchParams ?? getSearchParams();
 
-  return {
+  const route: RouteState = {
     sessionId: parseSessionId(params),
     messageId: parseMessageId(params),
     tab: parseTab(params),
     settingsPath: parseSettingsPath(params),
     diffFile: parseDiffFile(params),
   };
+  if (route.sessionId && (params.has('runtime') || params.has('backend'))) {
+    const owner = parseSessionOwner(params, route.sessionId);
+    if (owner) route.owner = owner;
+    else { route.sessionId = null; route.messageId = null; }
+  }
+  return route;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { sessionRefSchema } from '@/lib/runtime-identity';
 import { OpenCodeCompatibilityGate } from '@/components/update/OpenCodeCompatibilityGate';
 import React from 'react';
 import { AppStartupOverlay } from '@/components/ui/AppStartupOverlay';
@@ -12,6 +13,7 @@ import { MemoryDebugPanel } from '@/components/ui/MemoryDebugPanel';
 import { setStreamPerfMemoryDebugEnabled } from '@/stores/utils/streamDebug';
 import { setRequestsInFlightTrackingEnabled } from '@/stores/utils/requestsInFlight';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { refreshAcpAvailability } from '@/stores/useAgentBackendStore';
 // useEventStream removed — replaced by SyncProvider + SyncBridge
 import { useMenuActions } from '@/hooks/useMenuActions';
 import { useSessionStatusBootstrap } from '@/hooks/useSessionStatusBootstrap';
@@ -163,6 +165,12 @@ function App({ apis }: AppProps) {
     if (startupTraceEnabled()) {
       console.info('[startup-trace] enabled. Run console.table(window.__OPENCHAMBER_STARTUP_TRACE__) after startup.');
     }
+  }, []);
+
+  // A stored ACP choice is used optimistically until the server says whether
+  // ACP is enabled; if it is not, the app falls back to OpenCode.
+  React.useEffect(() => {
+    void refreshAcpAvailability();
   }, []);
 
   const initializeApp = useConfigStore((s) => s.initializeApp);
@@ -496,12 +504,17 @@ function App({ apis }: AppProps) {
     if (typeof window === 'undefined') return;
 
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string; messageId?: string }>).detail;
+      const detail = (event as CustomEvent<{ sessionId?: string; directory?: string; messageId?: string; owner?: import("@/lib/runtime-identity").SessionRef }>).detail;
       const sessionId = typeof detail?.sessionId === 'string' ? detail.sessionId.trim() : '';
       if (!sessionId) return;
       const directory = typeof detail?.directory === 'string' && detail.directory.trim().length > 0
         ? detail.directory.trim()
         : null;
+      if (detail?.owner) {
+        const owner = sessionRefSchema.safeParse(detail.owner);
+        if (owner.success) void openSessionLink(sessionId, detail.messageId ?? null, owner.data);
+        return;
+      }
       // A link (a desktop deep link, a link to this window's instance) carries
       // no directory; the route opener resolves it from the global session
       // list, as for a web link.
@@ -517,7 +530,7 @@ function App({ apis }: AppProps) {
     // desktop shell keeps it until the window asks. Taking is one-shot, so a
     // cleanup must not drop links already taken (Strict Mode re-runs this).
     void takePendingDesktopSessionLinks().then((links) => {
-      for (const link of links) void openSessionLink(link.sessionId, link.messageId);
+      for (const link of links) void openSessionLink(link.sessionId, link.messageId, link.owner);
     });
     return () => window.removeEventListener('openchamber:open-session', handler as EventListener);
   }, []);

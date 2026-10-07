@@ -1,3 +1,4 @@
+import { parseSessionOwner, sessionOwnerQuery, type SessionRef } from '@/lib/runtime-identity';
 import { isLinkIdentifier } from '@/lib/router/messageFocus';
 
 // Links to a session, optionally to one message in it. They extend the links
@@ -11,6 +12,7 @@ import { isLinkIdentifier } from '@/lib/router/messageFocus';
 export interface SessionLinkTarget {
     readonly sessionId: string;
     readonly messageId: string | null;
+    readonly owner?: SessionRef;
 }
 
 /** Which kind of link a surface hands out; see `useCopyMessageLink`. */
@@ -20,10 +22,13 @@ export type MessageLinkForm =
 
 const DEEP_LINK_PREFIX = 'openchamber://session/';
 
-export const buildMessageLink = (sessionId: string, messageId: string, form: MessageLinkForm): string | null => {
+export const buildMessageLink = (sessionId: string, messageId: string, form: MessageLinkForm, owner?: SessionRef): string | null => {
     if (!isLinkIdentifier(sessionId) || !isLinkIdentifier(messageId)) return null;
+    if (owner && owner.sessionId !== sessionId) return null;
     if (form.kind === 'deep-link') {
-        return `${DEEP_LINK_PREFIX}${sessionId}?message=${messageId}`;
+        const query = owner ? sessionOwnerQuery(owner) : new URLSearchParams();
+        query.set('message', messageId);
+        return `${DEEP_LINK_PREFIX}${sessionId}?${query}`;
     }
     let url: URL;
     try {
@@ -31,6 +36,7 @@ export const buildMessageLink = (sessionId: string, messageId: string, form: Mes
     } catch {
         return null;
     }
+    if (owner) sessionOwnerQuery(owner).forEach((value, key) => url.searchParams.set(key, value));
     url.searchParams.set('session', sessionId);
     url.searchParams.set('message', messageId);
     return url.toString();
@@ -54,6 +60,14 @@ const parseTarget = (sessionId: string | null | undefined, messageId: string | n
  * A link that is just a session id counts too. Anything else, including other
  * native deep links, is not a session link.
  */
+const parseOwnedTarget = (sessionId: string | null | undefined, url: URL): SessionLinkTarget | null => {
+    const target = parseTarget(sessionId, url.searchParams.get('message'));
+    if (!target) return null;
+    if (!url.searchParams.has('runtime') && !url.searchParams.has('backend')) return target;
+    const owner = parseSessionOwner(url.searchParams, target.sessionId);
+    return owner ? { ...target, owner } : null;
+};
+
 export const parseSessionLink = (href: string, ownOrigins: readonly string[]): SessionLinkTarget | null => {
     const bareSessionId = BARE_SESSION_ID_RE.exec(href.trim())?.[1];
     if (bareSessionId) return parseTarget(bareSessionId, null);
@@ -69,11 +83,11 @@ export const parseSessionLink = (href: string, ownOrigins: readonly string[]): S
         // Old Android WebViews put the route in the path instead of the host.
         const segments = [url.host, ...url.pathname.split('/')].filter(Boolean);
         if (segments[0]?.toLowerCase() !== 'session' || segments.length !== 2) return null;
-        return parseTarget(segments[1], url.searchParams.get('message'));
+        return parseOwnedTarget(segments[1], url);
     }
 
     if ((url.protocol === 'http:' || url.protocol === 'https:') && ownOrigins.includes(url.origin)) {
-        return parseTarget(url.searchParams.get('session'), url.searchParams.get('message'));
+        return parseOwnedTarget(url.searchParams.get('session'), url);
     }
 
     return null;

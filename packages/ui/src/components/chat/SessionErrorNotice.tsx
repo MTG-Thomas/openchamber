@@ -8,6 +8,7 @@ import { getLastConversationMessage, type Message, type Part, type Session } fro
 import { useLatestSessionError } from '@/sync/notification-store';
 import { useDirectoryStore, useSessionStatus, useSessionStatusSnapshotReady } from '@/sync/sync-context';
 import { refetchSessionMessages } from '@/sync/session-actions';
+import { isAcpSession } from '@/lib/agent/is-acp-session';
 import { LongErrorText } from './LongErrorText';
 import { readLastMessageState, scheduleUnansweredRechecks, type LastMessageState } from './sessionErrorNoticeState';
 
@@ -191,7 +192,8 @@ export const SessionErrorNotice: React.FC<SessionErrorNoticeProps> = ({ sessionI
     hasDetails = storedFailure.parentToolError !== null;
     detail = storedFailure.parentToolError ?? t('chat.sessionError.noDetails');
   } else {
-    title = t('chat.sessionError.noReply');
+    // An ACP session is not served by OpenCode: name the agent generically.
+    title = isAcpSession(sessionId) ? t('chat.sessionError.noReplyAgent') : t('chat.sessionError.noReply');
     hasDetails = false;
     detail = t('chat.sessionError.noDetails');
   }

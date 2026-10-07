@@ -1,0 +1,49 @@
+name: Fork checks
+on:
+  pull_request:
+  push:
+    branches: ['fork/**', 'upstream-sync/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fork-checks-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  shared:
+    if: github.repository == 'mtg-thomas/openchamber'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bun run --cwd packages/electron test:architecture
+      - run: bun run --cwd packages/electron test:updater
+      - run: bun run changelog:check
+      - run: bun run type-check
+      - run: bun run lint
+      - run: bun run build
+        env:
+          VITE_OPENCHAMBER_MULTIRUNTIME: '1'
+      - run: bun run dead-code
+  ios:
+    if: github.repository == 'mtg-thomas/openchamber'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - run: bun run mobile:build:ios:simulator
+        env:
+          VITE_OPENCHAMBER_MULTIRUNTIME: '1'

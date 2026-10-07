@@ -1319,6 +1319,7 @@ export interface PermissionsAPI {
 }
 
 export interface NotificationPayload {
+  owner?: import("../runtime-identity").SessionRef;
   title?: string;
   body?: string;
 
@@ -1375,6 +1376,8 @@ export interface PushUnsubscribePayload {
 }
 
 export interface ApnsTokenPayload {
+  /** Client-local saved-host identity; returned only to this registered device. */
+  runtimeId?: string;
   token: string;
   /** 'ios' (APNs) or 'android' (FCM) — lets the relay route the token to the right service. */
   platform?: string;

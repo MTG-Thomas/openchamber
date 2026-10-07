@@ -1,3 +1,4 @@
+import { UnifiedRuntimeSidebar } from './UnifiedRuntimeSidebar';
 import React from 'react';
 import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
@@ -664,6 +665,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         expandAllProjects={projectView.actions.expandAllProjects}
       />
 
+      <UnifiedRuntimeSidebar onSelected={onSessionSelected} />
       <SessionProjectCollection
         topology={{
           projects: sortedProjects,

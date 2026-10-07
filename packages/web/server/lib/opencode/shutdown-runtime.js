@@ -42,6 +42,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     getRelayService,
     getRelayReconcileTimer,
     getSpacesHost = () => null,
+    stopAcpRuntime = () => {},
   } = dependencies;
 
   let shutdownPromise = null;
@@ -80,6 +81,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
       () => getRealtimeProxyRuntime()?.stop(),
       // The isolated-spaces host, when the switch is on: its connections into spaces end here.
       () => getSpacesHost()?.close(),
+      stopAcpRuntime,
       () => getRelayService()?.stop(),
       () => getDictationRuntime()?.stop(),
       () => openCodeWatcherRuntime.stop(),

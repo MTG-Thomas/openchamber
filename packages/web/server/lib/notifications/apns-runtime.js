@@ -156,6 +156,7 @@ export const createApnsRuntime = (deps) => {
         if (typeof deviceToken !== 'string' || deviceToken.trim().length === 0) return null;
         return {
           deviceToken: deviceToken.trim(),
+          runtimeId: typeof entry.runtimeId === 'string' ? entry.runtimeId : undefined,
           createdAt: typeof entry.createdAt === 'number' ? entry.createdAt : null,
           lastSeenAt: typeof entry.lastSeenAt === 'number' ? entry.lastSeenAt : null,
           userAgent: typeof entry.userAgent === 'string' ? entry.userAgent : undefined,
@@ -180,7 +181,7 @@ export const createApnsRuntime = (deps) => {
 
   const normalizeEnvironment = (environment) => (environment === 'sandbox' ? 'sandbox' : 'production');
 
-  const addOrUpdateApnsToken = async (uiSessionToken, deviceToken, userAgent, platform, environment, pushKey) => {
+  const addOrUpdateApnsToken = async (uiSessionToken, deviceToken, userAgent, platform, environment, pushKey, runtimeId) => {
     if (!uiSessionToken || typeof deviceToken !== 'string' || deviceToken.trim().length === 0) return;
     const token = deviceToken.trim();
     const sessionKey = sessionKeyFor(uiSessionToken);
@@ -194,6 +195,7 @@ export const createApnsRuntime = (deps) => {
       const filtered = existing.filter((entry) => entry.deviceToken !== token);
       filtered.unshift({
         deviceToken: token,
+        runtimeId,
         createdAt: now,
         lastSeenAt: now,
         userAgent: typeof userAgent === 'string' && userAgent.length > 0 ? userAgent : undefined,
@@ -522,7 +524,7 @@ export const createApnsRuntime = (deps) => {
       for (const entry of normalizeTokens(record)) {
         if (seen.has(entry.deviceToken)) continue;
         seen.add(entry.deviceToken);
-        if (entry.pushKey) {
+        if (entry.pushKey || entry.runtimeId) {
           sealedDevices.push(entry);
           continue;
         }
@@ -539,14 +541,19 @@ export const createApnsRuntime = (deps) => {
         await sendViaRelay(deviceTokens, payload, relay, relay.environment ?? environment);
       }
       for (const entry of sealedDevices) {
-        await sendViaRelay([entry.deviceToken], sealedPayloadFor(payload, entry.pushKey), relay, relay.environment ?? entry.environment);
+        await sendViaRelay([entry.deviceToken], devicePayloadFor(payload, entry), relay, relay.environment ?? entry.environment);
       }
       return;
     }
     await sendViaDirectApns(tokensByEnvironment, payload);
     for (const entry of sealedDevices) {
-      await sendViaDirectApns(new Map([[entry.environment, [entry.deviceToken]]]), sealedPayloadFor(payload, entry.pushKey));
+      await sendViaDirectApns(new Map([[entry.environment, [entry.deviceToken]]]), devicePayloadFor(payload, entry));
     }
+  };
+
+  const devicePayloadFor = (payload, entry) => {
+    const owned = { ...payload, data: { ...payload?.data, ...(entry.runtimeId ? { runtimeId: entry.runtimeId, runtimeKey: entry.runtimeId } : {}) } };
+    return entry.pushKey ? sealedPayloadFor(owned, entry.pushKey) : owned;
   };
 
   // What the relay and the push service see for a device with a key: the

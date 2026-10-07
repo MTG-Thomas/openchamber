@@ -83,6 +83,7 @@ export function createGlobalMessageStreamHub({
       directory,
       eventId,
       spaceId,
+      backendId: envelope?.backendId ?? 'opencode',
       serialize() {
         serializedFrame ??= serializeMessageStreamWsEvent(payload, { directory, eventId });
         return serializedFrame;
@@ -230,6 +231,16 @@ export function createGlobalMessageStreamHub({
     // deltas before it reads the replay tail.
     flushPending() {
       coalescer.flush();
+    },
+    // Inject a synthetic normalized event into the same fan-out as upstream
+    // OpenCode events. Used by the ACP event source to publish translated
+    // session/update notifications to all browser WS subscribers. Additive:
+    // does not touch the upstream OpenCode reader or its replay buffer.
+    publishEvent(payload, { directory: directoryArg } = {}) {
+      if (!payload || typeof payload !== 'object') return;
+      const directory =
+        typeof directoryArg === 'string' && directoryArg.length > 0 ? directoryArg : 'global';
+      coalescer.push({ envelope: { directory, backendId: 'acp' }, payload });
     },
     replayAfter(eventId) {
       if (!eventId) {

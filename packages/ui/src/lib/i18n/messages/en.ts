@@ -2038,6 +2038,7 @@ export const dict = {
   'chat.sessionError.noDetails': 'OpenCode reported no details. The status report lists recent errors.',
   'chat.sessionError.showStatus': 'Show OpenCode status',
   'chat.sessionError.noReply': 'OpenCode did not start a reply to this message.',
+  'chat.sessionError.noReplyAgent': 'The agent did not start a reply to this message.',
   'chat.sessionError.interrupted': 'OpenCode interrupted this reply.',
   'chat.longError.expand': 'Show full error',
   'chat.longError.collapse': 'Show less',

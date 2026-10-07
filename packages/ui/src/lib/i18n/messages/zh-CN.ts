@@ -2004,6 +2004,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.sessionError.noDetails': 'OpenCode 未报告任何详情。状态报告会列出最近的错误。',
   'chat.sessionError.showStatus': '显示 OpenCode 状态',
   'chat.sessionError.noReply': 'OpenCode 没有开始回复这条消息。',
+  'chat.sessionError.noReplyAgent': '智能体没有开始回复这条消息。',
   'chat.sessionError.interrupted': 'OpenCode 中断了此回复。',
   'chat.longError.expand': '显示完整错误',
   'chat.longError.collapse': '收起',

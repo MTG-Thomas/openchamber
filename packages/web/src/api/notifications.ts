@@ -1,3 +1,4 @@
+import { sessionOwnerQuery } from '@openchamber/ui/lib/runtime-identity';
 import type { NotificationPayload, NotificationsAPI } from '@openchamber/ui/lib/api/types';
 
 const SW_READY_TIMEOUT_MS = 1500;
@@ -26,7 +27,10 @@ type NotificationTarget = {
 const getNotificationTarget = (payload?: NotificationPayload): NotificationTarget | undefined => {
   const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : '';
   if (!sessionId) return undefined;
-  const url = buildSessionTargetUrl(sessionId);
+  const owner = payload?.owner;
+  const query = owner ? sessionOwnerQuery(owner) : null;
+  query?.set('session', sessionId);
+  const url = query ? `/?${query}` : buildSessionTargetUrl(sessionId);
   if (!url) return undefined;
   return { url, sessionId };
 };
@@ -83,8 +87,9 @@ const pruneNotificationClaims = (now: number): void => {
 };
 
 const claimNotificationPayload = (payload?: NotificationPayload): boolean => {
-  const key = getNotificationClaimKey(payload);
-  if (!key) return true;
+  const claim = getNotificationClaimKey(payload);
+  if (!claim) return true;
+  const key = payload?.owner ? `${payload.owner.runtimeId}:${payload.owner.backendId}:${claim}` : claim;
 
   const now = Date.now();
   pruneNotificationClaims(now);

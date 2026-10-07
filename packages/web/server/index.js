@@ -1,3 +1,6 @@
+import { createOpenCodeAutomationEventHub } from './lib/event-stream/opencode-automation-hub.js';
+import { isAcpEnabled } from './lib/acp/env.js';
+import { stopAcpRuntime } from './lib/acp/routes.js';
 import { installOpenCodeV2, supportsOpenCodeV2Install } from './lib/opencode/v2-install.js';
 import { describeOpenCodeCompatibility, readOpenCodeCliVersion, readExternalOpenCodeVersion } from './lib/opencode/compatibility.js';
 import 'reflect-metadata';
@@ -1030,6 +1033,8 @@ const globalMessageStreamHub = createGlobalMessageStreamHub({
   deltaCoalesceWindowMs: resolveDeltaCoalesceWindowMs(),
 });
 
+const openCodeAutomationEventHub = createOpenCodeAutomationEventHub(globalMessageStreamHub);
+
 // Jev model routing and the permission safety net. Every failure keeps the
 // user's own model or the auto-accept reply it was asked about.
 const routingRuntime = createRoutingRuntime({
@@ -1054,7 +1059,7 @@ const sessionWorkRuntime = createSessionWorkRuntime({
 });
 
 const permissionAutoAcceptRuntime = createPermissionAutoAcceptRuntime({
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   readSettingsFromDiskMigrated,
@@ -1074,7 +1079,7 @@ notificationTriggerRuntime.setGetIsSessionAutoAccepting(
 // Queued follow-up messages are delivered by the server so a closed tab or a
 // dropped connection no longer strands them (VS Code keeps its UI-side queue).
 const messageQueueRuntime = createMessageQueueRuntime({
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   sessionKnowledgeRuntime,
@@ -1090,7 +1095,7 @@ messageQueueRuntime.start();
 // Sessions an agent dispatched with `returnResult` report back to it: their
 // final answer lands in the dispatching session and wakes it.
 const dispatchResultsRuntime = createDispatchResultsRuntime({
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   dataDir: OPENCHAMBER_DATA_DIR,
@@ -1106,7 +1111,7 @@ const messageSearchRuntime = createMessageSearchRuntime({
   dataDir: OPENCHAMBER_DATA_DIR,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
-  globalEventHub: globalMessageStreamHub,
+  globalEventHub: openCodeAutomationEventHub,
   readSettings: async () => {
     const settings = await readSettingsFromDisk();
     return { enabled: settings.messageSearchEnabled === true, reasoning: settings.messageSearchReasoningEnabled === true };
@@ -1130,6 +1135,7 @@ const openCodeWatcherRuntime = createOpenCodeWatcherRuntime({
 // directory to route its own OpenCode calls to the right instance.
 console.log('[session-assist] listening for session events');
 globalMessageStreamHub.subscribeEvent((event) => {
+  if (event.backendId === 'acp') return; // OpenCode-only automation cannot mutate ACP sessions.
   const directory = typeof event?.directory === 'string' && event.directory && event.directory !== 'global'
     ? event.directory
     : '';
@@ -1224,7 +1230,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
   // Isolated spaces: with the switch on, the session list carries every space's sessions and
   // the global SSE stream their events. Called, not captured: the host is made in `main`.
   getMergeSpaceSessionList: () => (spacesHost ? (payload) => spacesHost.mergeSessionList(payload) : null),
-  getSpaceEventHub: () => (spacesHost ? globalMessageStreamHub : null),
+  getSpaceEventHub: () => (spacesHost || isAcpEnabled() ? globalMessageStreamHub : null),
   fs,
   os,
   path,
@@ -1865,6 +1871,7 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   getRelayService: () => relayServiceInstance,
   getRelayReconcileTimer: () => relayReconcileTimer,
   getSpacesHost: () => spacesHost,
+  stopAcpRuntime,
 });
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
@@ -2488,6 +2495,8 @@ async function main(options = {}) {
     globalEventHub: globalMessageStreamHub,
     permissionAutoAcceptRuntime,
     worktreeBootstrapStore,
+    globalMessageStreamHub,
+    setSessionStatus: (...args) => sessionRuntime.setSessionStatus(...args),
     messageQueueRuntime,
     routingRuntime,
   });

@@ -409,3 +409,14 @@ it on the project-root header and on sessions in linked worktrees. Recent shows 
 session with an active action in its own directory. Archived buckets do not show action
 indicators. Indicators stay inside the existing row/header action-padding boundary, so
 hover, keyboard focus, and always-visible action buttons move them left without hiding them.
+
+### Fork aggregate runtime tree
+
+With `VITE_OPENCHAMBER_MULTIRUNTIME=1`, `UnifiedRuntimeSidebar` renders a
+runtime/project/session tree before the existing foreground collection, also
+inside `MobileSessionsSheet`. Rows and project keys use qualified identity;
+expansion is local to each mounted tree. Connections live in `lib/runtimes` and
+survive foreground shell remounts. Hidden-document observations are suspended
+and resumed without stopping agent turns. A failed host keeps its rows and offers
+reconnect independently. Selecting a row activates its registered host and opens
+an owner-validated session link.

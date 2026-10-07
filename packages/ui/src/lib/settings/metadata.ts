@@ -25,6 +25,7 @@ export type SettingsPageSlug =
   | 'routing'
   | 'magic-prompts'
   | 'snippets'
+  | 'agent-backend'
   | 'notifications'
   | 'voice'
   | 'tunnel'
@@ -224,6 +225,13 @@ export const SETTINGS_PAGE_METADATA: readonly SettingsPageMeta[] = [
     kind: 'split',
     keywords: ['prompt', 'templates', 'multi-run', 'strategy', 'approach'],
   },
+  {
+    slug: 'agent-backend',
+    title: 'Agent Backend',
+    group: 'opencode',
+    kind: 'single',
+    keywords: ['agent', 'acp', 'protocol', 'backend', 'claude', 'gemini', 'stdio'],
+  },
 
   { slug: 'notifications', title: 'Notifications', group: 'general', kind: 'single', keywords: ['alerts', 'native', 'summary', 'summarization'], },
   { slug: 'voice', title: 'Voice', group: 'general', kind: 'single', keywords: ['tts', 'speech', 'voice'], isAvailable: (ctx) => !ctx.isVSCode },
@@ -335,6 +343,9 @@ export function getSettingsNavIcon(slug: SettingsPageSlug): IconName | null {
 
     case 'git':
       return 'git-branch';
+
+    case 'agent-backend':
+      return 'terminal-box';
 
     case 'integrations':
       return 'plug';

@@ -2034,6 +2034,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.sessionError.noDetails': 'OpenCode から詳細は報告されませんでした。ステータスレポートで最近のエラーを確認できます。',
   'chat.sessionError.showStatus': 'OpenCode のステータスを表示',
   'chat.sessionError.noReply': 'OpenCode はこのメッセージへの返答を開始しませんでした。',
+  'chat.sessionError.noReplyAgent': 'エージェントはこのメッセージへの返答を開始しませんでした。',
   'chat.sessionError.interrupted': 'OpenCode がこの応答を中断しました。',
   'chat.longError.expand': 'エラー全文を表示',
   'chat.longError.collapse': '折りたたむ',

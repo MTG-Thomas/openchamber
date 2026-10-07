@@ -1,3 +1,4 @@
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import React from 'react';
 import { registerPlugin } from '@capacitor/core';
 
@@ -99,11 +100,14 @@ export const useNativePushRegistration = (options: { enabled: boolean }): void =
         }
 
         const registrationHandle = await PushNotifications.addListener('registration', (token) => {
+          const runtimeId = getRuntimeKey();
           lastTokenRef.current = token.value;
           void getPushKey().then((pushKey) => {
+            if (disposed || runtimeId !== getRuntimeKey()) return;
             const apis = getRegisteredRuntimeAPIs();
             const payload: ApnsTokenPayload = {
               token: token.value,
+              runtimeId,
               platform: getClientPlatform(),
               environment: getApnsEnvironment(),
             };

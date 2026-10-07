@@ -23,6 +23,8 @@ export function createGlobalMessageStreamWsBridge({
   const clients = new Set();
   const clientLastEventIds = new Map();
   const readyClients = new Set();
+  // Health checks fire once per upstream outage, not once per retry.
+  let upstreamHealthCheckTriggered = false;
 
   const removeClient = (socket) => {
     clients.delete(socket);
@@ -67,25 +69,6 @@ export function createGlobalMessageStreamWsBridge({
     }
   };
 
-  const closeClientsWithInitialError = ({ message, closeReason = message, triggerHealthCheckFor = null }) => {
-    for (const socket of Array.from(clients)) {
-      sendMessageStreamWsFrame(socket, { type: 'error', message });
-      try {
-        socket.close(1011, closeReason);
-      } catch {
-      }
-      removeClient(socket);
-    }
-
-    if (triggerHealthCheckFor === true || (triggerHealthCheckFor && shouldTriggerUpstreamHealthCheck(triggerHealthCheckFor))) {
-      triggerHealthCheck?.();
-    }
-
-    if (ownsGlobalHub) {
-      globalHub.stop();
-    }
-  };
-
   // Browser clients take the events of isolated spaces too: each frame carries its directory,
   // and a space's directory is one more project directory to the UI.
   const unsubscribeEvent = globalHub.subscribeEvent((event) => {
@@ -117,6 +100,7 @@ export function createGlobalMessageStreamWsBridge({
 
   const unsubscribeStatus = globalHub.subscribeStatus((status) => {
     if (status.type === 'connect') {
+      upstreamHealthCheckTriggered = false;
       for (const socket of Array.from(clients)) {
         if (!readyClients.has(socket)) {
           markReady(socket, clientLastEventIds.get(socket) ?? '');
@@ -137,21 +121,25 @@ export function createGlobalMessageStreamWsBridge({
     }
 
     if (status.type === 'initial-error') {
-      const error = status.error;
-      if (error?.type === 'upstream_unavailable') {
-        closeClientsWithInitialError({
-          message: `OpenCode event stream unavailable (${error.status})`,
-          closeReason: 'OpenCode event stream unavailable',
-          triggerHealthCheckFor: error.response,
-        });
-        return;
+      // Upstream (OpenCode) is unavailable, but the OpenChamber stream itself
+      // is alive and still carries locally published events (e.g. ACP
+      // sessions). Keep clients connected instead of closing them into a
+      // reconnect storm; the upstream reader keeps retrying in the background
+      // and a later 'connect' status re-marks readiness with replay. The
+      // failure stays observable through the health endpoints.
+      let shouldTrigger = false;
+      if (!upstreamHealthCheckTriggered) {
+        if (status.error?.response) {
+          shouldTrigger = shouldTriggerUpstreamHealthCheck(status.error.response);
+        } else {
+          // URL build failures retry with the same mechanism; no health probe.
+          shouldTrigger = !status.buildUrlFailed;
+        }
       }
-
-      closeClientsWithInitialError({
-        message: status.buildUrlFailed ? 'OpenCode service unavailable' : 'Failed to connect to OpenCode event stream',
-        closeReason: status.buildUrlFailed ? 'OpenCode service unavailable' : 'Failed to connect to OpenCode event stream',
-        triggerHealthCheckFor: !status.buildUrlFailed,
-      });
+      if (shouldTrigger) {
+        upstreamHealthCheckTriggered = true;
+        triggerHealthCheck?.();
+      }
       return;
     }
 
@@ -194,9 +182,11 @@ export function createGlobalMessageStreamWsBridge({
     clients.add(socket);
     clientLastEventIds.set(socket, requestedLastEventId);
     globalHub.start();
-    if (globalHub.isConnected()) {
-      markReady(socket, requestedLastEventId);
-    }
+    // Mark the client ready immediately: the hub also carries locally
+    // published events (ACP sessions) that must flow while the OpenCode
+    // upstream is still connecting. Upstream events start flowing once the
+    // reader connects and a 'connect' status re-marks readiness with replay.
+    markReady(socket, requestedLastEventId);
   };
 
   const close = () => {

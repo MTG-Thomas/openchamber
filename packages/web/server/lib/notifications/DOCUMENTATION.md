@@ -176,3 +176,17 @@ The control stream retains its browser-control capability declaration, runtime
 switch cleanup, stale-source rejection, heartbeat, and reconnect-ready events.
 Electron uses its native notification path; VS Code does not subscribe to this
 server-only stream. Mobile shells retain their existing push behavior.
+
+### Fork qualified native taps
+
+APNs token registration accepts a bounded `runtimeId` representing that client's
+saved connection. The token record retains it; delivery returns it only to that
+device, together with the session `backendId`. Devices with different saved-host
+IDs receive separate payloads, preserving sealed-content delivery when a push
+key exists. This is an opaque navigation identity, never an endpoint or token.
+Older registrations still receive the legacy payload; partially qualified taps
+are refused by the client. Re-registering refreshes the identity.
+
+Native APNs payloads also retain `runtimeKey` as an alias of the recipient-specific
+`runtimeId`. The iOS notification extension uses that existing field to refuse
+marking a session row from another host unread in the widget snapshot.

@@ -2006,6 +2006,7 @@ export const dict: Record<I18nKey, string> = {
   'chat.sessionError.noDetails': 'OpenCode 未回報任何詳情。狀態報告會列出最近的錯誤。',
   'chat.sessionError.showStatus': '顯示 OpenCode 狀態',
   'chat.sessionError.noReply': 'OpenCode 沒有開始回覆這則訊息。',
+  'chat.sessionError.noReplyAgent': '智慧代理沒有開始回覆這則訊息。',
   'chat.sessionError.interrupted': 'OpenCode 中斷了此回覆。',
   'chat.longError.expand': '顯示完整錯誤',
   'chat.longError.collapse': '收合',
