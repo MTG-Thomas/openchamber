@@ -179,7 +179,8 @@ Local Linux verification on OpenChamber 2.1.1 / mobile package 1.13.2:
 - Real `muse-acp` 0.7.0: OpenChamber HTTP create/prompt/global SSE complete
   successfully with streamed text and six tool calls. Built desktop web UI
   renders tool activity; a live cancel request succeeds. Hosted mobile at
-  390×844 loads the ACP transcript after navigation with no horizontal overflow.
+  390×844 loads the ACP transcript after navigation, sends a fresh prompt and
+  renders its streamed reply/tools with no horizontal overflow.
 - Deterministic ACP fixtures cover permission replies, cancellation,
   numbered event replay, obsolete owners, busy-agent refusal, enterprise
   refusal and ambiguous backend IDs. APNs fixtures verify recipient-specific
@@ -198,3 +199,14 @@ Native iOS runtime flows remain unverified locally: direct/relay pairing,
 Keychain, APNs delivery/taps, permissions, suspend/resume and simultaneous
 saved-host connections require a simulator/device acceptance run. Hosted
 Chromium mobile proof does not establish WKWebView behavior.
+
+Fork repository settings disable the inherited `pr checks` (`oc-review.yml`)
+and `pr-review` workflows: they require upstream Blacksmith runners and review
+app secrets. `fork-checks.yml` preserves the shared test/type/lint/build gates,
+changelog check and Electron packaging/updater tests on available runners.
+Actions may create integration PRs; default token permissions stay read-only,
+and write scopes are declared only in the intake workflow.
+
+Reviewed visual evidence: [desktop web](evidence/acp-desktop.png) and
+[hosted mobile](evidence/acp-mobile.png). Captures exclude unrelated session
+lists. Mobile proof is Chromium, not the native iOS shell.
