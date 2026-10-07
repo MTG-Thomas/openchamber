@@ -1,3 +1,5 @@
+import { isAcpEnabled } from './lib/acp/env.js';
+import { stopAcpRuntime } from './lib/acp/routes.js';
 import { installOpenCodeV2, supportsOpenCodeV2Install } from './lib/opencode/v2-install.js';
 import { describeOpenCodeCompatibility, readOpenCodeCliVersion, readExternalOpenCodeVersion } from './lib/opencode/compatibility.js';
 import 'reflect-metadata';
@@ -1130,6 +1132,7 @@ const openCodeWatcherRuntime = createOpenCodeWatcherRuntime({
 // directory to route its own OpenCode calls to the right instance.
 console.log('[session-assist] listening for session events');
 globalMessageStreamHub.subscribeEvent((event) => {
+  if (event.backendId === 'acp') return; // OpenCode-only automation cannot mutate ACP sessions.
   const directory = typeof event?.directory === 'string' && event.directory && event.directory !== 'global'
     ? event.directory
     : '';
@@ -1224,7 +1227,7 @@ const serverUtilsRuntime = createServerUtilsRuntime({
   // Isolated spaces: with the switch on, the session list carries every space's sessions and
   // the global SSE stream their events. Called, not captured: the host is made in `main`.
   getMergeSpaceSessionList: () => (spacesHost ? (payload) => spacesHost.mergeSessionList(payload) : null),
-  getSpaceEventHub: () => (spacesHost ? globalMessageStreamHub : null),
+  getSpaceEventHub: () => (spacesHost || isAcpEnabled() ? globalMessageStreamHub : null),
   fs,
   os,
   path,
@@ -1865,6 +1868,7 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   getRelayService: () => relayServiceInstance,
   getRelayReconcileTimer: () => relayReconcileTimer,
   getSpacesHost: () => spacesHost,
+  stopAcpRuntime,
 });
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);

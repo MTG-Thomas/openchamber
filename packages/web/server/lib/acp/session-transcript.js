@@ -29,7 +29,7 @@ const transcriptFor = (sessionId) => {
 };
 
 /** Merge a record into the transcript by id, preserving first-seen order. */
-export const recordMessage = (sessionId, record) => {
+const recordMessage = (sessionId, record) => {
   if (!sessionId || !isRecord(record) || !record.id) return;
   transcriptFor(sessionId).set(record.id, record);
 };

@@ -1,3 +1,5 @@
+import { isAcpSessionRecord } from '@/lib/agent/types';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import React from 'react';
 import { formatChangeRequestReference } from '@/lib/source-control/identity';
 import { ComposerDictation } from '@/components/dictation/ComposerDictation';
@@ -426,8 +428,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Inside the chat column the composer follows the session the timeline is
     // showing (see chatColumnSession.ts); elsewhere it follows the live one.
     const liveSessionId = useSessionUIStore((s) => (chatColumnSession ? null : s.currentSessionId));
-    const activeBackend = useAgentBackendStore((s) => s.activeBackend);
+    const draftBackend = useAgentBackendStore((s) => s.activeBackend);
     const currentSessionId = chatColumnSession ? chatColumnSession.sessionId : liveSessionId;
+    const ownedSession = useGlobalSessionsStore((state) => currentSessionId ? state.entityById.get(currentSessionId) : undefined);
+    const activeBackend = currentSessionId ? (isAcpSessionRecord(ownedSession) ? 'acp' : 'opencode') : draftBackend;
     React.useEffect(() => {
         if (inputModeParentRef.current !== null && inputModeParentRef.current !== currentSessionId) {
             setInputMode('normal');
@@ -1659,7 +1663,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
         // Provider/model are OpenCode concepts; the ACP backend does not use
         // them, so they must not gate ACP prompts (FR-6 isolation).
-        const isAcpActive = useAgentBackendStore.getState().activeBackend === 'acp';
+        const isAcpActive = activeBackend === 'acp';
         if (!isAcpActive && (!providerIdToSend || !modelIdToSend)) {
             console.warn('Cannot send message: provider or model not selected');
             toast.error(t('chat.chatInput.toast.noModelSelected'));

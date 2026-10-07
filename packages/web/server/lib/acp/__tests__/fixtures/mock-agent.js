@@ -89,6 +89,9 @@ const prompt = async (params, cx) => {
     const promptText = Array.isArray(params.prompt)
       ? params.prompt.filter((block) => block?.type === "text").map((block) => block.text).join("")
       : (typeof params.prompt === "string" ? params.prompt : "");
+    if (process.env.MOCK_AGENT_ECHO_USER === '1') {
+      await cx.notify(acp.methods.client.session.update, { sessionId: params.sessionId, update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: promptText } } });
+    }
     // A prompt beginning with `permission:` makes the agent ask the client to
     // approve a tool call, then echo the chosen option so tests can assert the
     // round-trip. Existing behavior is unchanged for other prompts.

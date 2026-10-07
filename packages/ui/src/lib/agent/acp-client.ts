@@ -8,6 +8,7 @@
 // resolve to an empty success that could masquerade as authoritative state.
 // The ACP path does not reuse the OpenCode HTTP provider-circuit.
 
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import type { Session } from "../opencode/model";
 import { ACP_SESSION_METADATA, ZERO_TOKEN_USAGE } from "./types";
 import { runtimeFetch } from "@/lib/runtime-fetch";
@@ -209,6 +210,7 @@ const buildAcpSession = (sessionID: string, directory: string | null, title: str
 
 export class AcpClient implements AgentClient {
   readonly backend: AgentBackendType = "acp";
+  private readonly runtimeId = getRuntimeKey();
   private readonly config: AcpAgentRuntimeConfig;
   /** Sessions returned by the last /initialize (for sidebar population). */
   private _initSessions: AcpSessionRef[] = [];
@@ -221,7 +223,12 @@ export class AcpClient implements AgentClient {
     return this._initSessions.map((s) => ({ id: s.sessionId, ...(s.title !== undefined ? { title: s.title } : {}) }));
   }
 
+  private assertOwner(): void {
+    if (getRuntimeKey() !== this.runtimeId) throw new Error('ACP runtime changed; reconnect to its owning host.');
+  }
+
   async createSession(params?: CreateSessionParams, directory?: string | null): Promise<Session> {
+    this.assertOwner();
     const body = {
       command: this.config.command,
       args: this.config.args,
@@ -252,10 +259,15 @@ export class AcpClient implements AgentClient {
     // Store the sessions returned by /initialize for the sidebar.
     this._initSessions = data.sessions;
 
-    return buildAcpSession(data.sessionID, directory ?? null, params?.title);
+    const session = buildAcpSession(data.sessionID, directory ?? null, params?.title);
+    session.metadata = { openchamber: { acp: true, agentId: this.config.agentId ?? 'acp-agent' } };
+    return session;
   }
 
   async sendMessage(params: SendMessageParams): Promise<string> {
+    if (getRuntimeKey() !== this.runtimeId || (params.runtimeKey && params.runtimeKey !== this.runtimeId)) {
+      throw new Error('Message was not sent because the runtime changed.');
+    }
     if (!params.id) {
       throw new Error("AcpClient.sendMessage requires a session id (params.id)");
     }
@@ -263,7 +275,7 @@ export class AcpClient implements AgentClient {
     const response = await runtimeFetch("/api/agent/acp/session/prompt", {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ sessionID: params.id, text: params.text, userMessageId: params.messageId }),
+      body: JSON.stringify({ sessionID: params.id, agentId: this.config.agentId, text: params.text, userMessageId: params.messageId }),
     });
 
     if (!response.ok) {
@@ -278,11 +290,12 @@ export class AcpClient implements AgentClient {
   }
 
   async abortSession(id: string): Promise<boolean> {
+    this.assertOwner();
     try {
       const response = await runtimeFetch("/api/agent/acp/session/cancel", {
         method: "POST",
         headers: JSON_HEADERS,
-        body: JSON.stringify({ sessionID: id }),
+        body: JSON.stringify({ sessionID: id, agentId: this.config.agentId }),
       });
       return response.ok;
     } catch {
@@ -296,11 +309,12 @@ export class AcpClient implements AgentClient {
     requestId: string,
     reply: 'once' | 'always' | 'reject',
   ): Promise<boolean> {
+    this.assertOwner();
     try {
       const response = await runtimeFetch("/api/agent/acp/session/permission", {
         method: "POST",
         headers: JSON_HEADERS,
-        body: JSON.stringify({ sessionID: sessionId, requestID: requestId, reply }),
+        body: JSON.stringify({ sessionID: sessionId, agentId: this.config.agentId, requestID: requestId, reply }),
       });
       // 404 means the request is already resolved (answered, cancelled, or the
       // turn ended). The pending prompt is gone, so the user's goal is met.
@@ -311,7 +325,8 @@ export class AcpClient implements AgentClient {
   }
 
   async listModels(sessionId: string): Promise<AgentModelConfig | null> {
-    const query = sessionId ? `?sessionID=${encodeURIComponent(sessionId)}` : "";
+    this.assertOwner();
+    const query = sessionId ? `?sessionID=${encodeURIComponent(sessionId)}&agentId=${encodeURIComponent(this.config.agentId ?? 'acp-agent')}` : "";
     const response = await runtimeFetch(`/api/agent/acp/session/config${query}`, {
       method: "GET",
       headers: JSON_HEADERS,
@@ -327,10 +342,11 @@ export class AcpClient implements AgentClient {
   }
 
   async setModel(sessionId: string, configId: string, value: string): Promise<AgentModelConfig | null> {
+    this.assertOwner();
     const response = await runtimeFetch("/api/agent/acp/session/config", {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ sessionID: sessionId, configId, value }),
+      body: JSON.stringify({ sessionID: sessionId, agentId: this.config.agentId, configId, value }),
     });
     if (!response.ok) {
       const serverMessage = await parseErrorBody(response);
@@ -344,6 +360,7 @@ export class AcpClient implements AgentClient {
   }
 
   async listSessions(cwd?: string): Promise<Array<{ id: string; title?: string }>> {
+    this.assertOwner();
     const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : '';
     const response = await runtimeFetch(`/api/agent/acp/sessions${query}`, {
       method: 'GET',
@@ -360,6 +377,7 @@ export class AcpClient implements AgentClient {
   }
 
   async deleteSession(id: string): Promise<boolean> {
+    this.assertOwner();
     try {
       const response = await runtimeFetch(`/api/agent/acp/sessions/${encodeURIComponent(id)}`, {
         method: 'DELETE',
@@ -372,10 +390,11 @@ export class AcpClient implements AgentClient {
   }
 
   async loadSession(sessionId: string, directory?: string): Promise<Array<{ type: string; properties: Record<string, unknown> }>> {
+    this.assertOwner();
     const response = await runtimeFetch('/api/agent/acp/session/load', {
       method: 'POST',
       headers: JSON_HEADERS,
-      body: JSON.stringify({ sessionId, directory }),
+      body: JSON.stringify({ sessionId, directory, agentId: this.config.agentId }),
     });
     if (!response.ok) {
       const serverMessage = await parseErrorBody(response);

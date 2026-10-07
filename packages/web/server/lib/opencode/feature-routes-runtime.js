@@ -663,7 +663,16 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     // ACP backend (opt-in, gated by OPENCHAMBER_ACP_ENABLED; OpenCode default).
     // The routes register either way: each answers 404 while ACP is disabled,
     // and `/api/agent/acp/status` reports the flag to the UI.
-    registerAcpRoutes(app, { globalMessageStreamHub, setSessionStatus });
+    registerAcpRoutes(app, { globalMessageStreamHub, setSessionStatus,
+      openCodeSessionExists: async (sessionId) => {
+        const response = await fetch(buildOpenCodeUrl(`/api/session/${encodeURIComponent(sessionId)}`, ''), {
+          headers: getOpenCodeAuthHeaders(), signal: AbortSignal.timeout(5000),
+        });
+        if (response.status === 404) return false;
+        if (!response.ok) throw new Error('OpenCode ownership probe failed');
+        return true;
+      },
+    });
     if (isAcpEnabled()) {
       // ACP sessions do not exist in OpenCode: serve them in session lists
       // (so list snapshots keep them) and answer by-id requests for them

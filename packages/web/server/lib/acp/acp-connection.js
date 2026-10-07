@@ -165,7 +165,7 @@ export class AcpAgentConnection {
           clientCapabilities: {},
         });
         this.initializeResult = initResult;
-        console.log(`[acp] initialized protocolVersion=${initResult?.protocolVersion} raw=${JSON.stringify(initResult).slice(0, 600)}`);
+        console.log(`[acp] initialized protocolVersion=${initResult?.protocolVersion}`);
         this._resolveInit(initResult);
         // The handshake is settled: a later child exit is a normal teardown,
         // not a failed handshake, and must not try to reject again.

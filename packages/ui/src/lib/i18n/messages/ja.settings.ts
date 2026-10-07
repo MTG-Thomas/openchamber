@@ -2544,7 +2544,9 @@ export const settingsDict = {
   'settings.agentBackend.field.name': 'エージェント名',
   'settings.agentBackend.field.command': 'エージェントコマンド',
   'settings.agentBackend.field.command.placeholder': '例: claude-code',
+  'settings.agentBackend.field.args': '引数（JSON 配列）',
   'settings.agentBackend.field.enabled': '有効',
   'settings.agentBackend.empty': 'ACP エージェントはまだ設定されていません。',
+  'settings.agentBackend.enterprise': 'ACP のプロバイダー設定は OpenCode の管理外のため、エンタープライズモードでは使用できません。',
   'settings.agentBackend.unavailable': 'このサーバーでは ACP が有効になっていません（OPENCHAMBER_ACP_ENABLED）。代わりに OpenCode を使用します。ACP エージェントの選択は保持されます。',
 } as const;

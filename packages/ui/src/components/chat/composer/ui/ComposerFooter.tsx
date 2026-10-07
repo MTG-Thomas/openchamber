@@ -1,3 +1,5 @@
+import { isAcpSessionRecord } from '@/lib/agent/types';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 /**
  * The composer's footer row.
  *
@@ -94,7 +96,7 @@ export interface ComposerFooterProps {
 
 export function ComposerFooter(props: ComposerFooterProps) {
     const { t } = useI18n();
-    const activeBackend = useAgentBackendStore((s) => s.activeBackend);
+    const draftBackend = useAgentBackendStore((s) => s.activeBackend);
     const {
         isMobile,
         isVSCode,
@@ -144,6 +146,8 @@ export function ComposerFooter(props: ComposerFooterProps) {
         parallelRun = null,
     } = props;
 
+    const ownedSession = useGlobalSessionsStore((state) => currentSessionId ? state.entityById.get(currentSessionId) : undefined);
+    const activeBackend = currentSessionId ? (isAcpSessionRecord(ownedSession) ? 'acp' : 'opencode') : draftBackend;
     const dictationEnabled = useConfigStore((state) => state.dictationEnabled);
     const [dictationSupported] = React.useState(() => !isVSCodeRuntime() && isDictationCaptureSupported());
     const showDictation = dictationEnabled && dictationSupported;

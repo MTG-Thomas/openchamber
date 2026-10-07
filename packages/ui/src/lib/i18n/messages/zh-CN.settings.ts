@@ -2544,7 +2544,9 @@ export const settingsDict = {
   'settings.agentBackend.field.name': '智能体名称',
   'settings.agentBackend.field.command': '智能体命令',
   'settings.agentBackend.field.command.placeholder': '例如 claude-code',
+  'settings.agentBackend.field.args': '参数（JSON 数组）',
   'settings.agentBackend.field.enabled': '已启用',
   'settings.agentBackend.empty': '尚未配置任何 ACP 智能体。',
+  'settings.agentBackend.enterprise': 'ACP 的提供商配置不受 OpenCode 管理，因此企业模式下不可用。',
   'settings.agentBackend.unavailable': '此服务器未启用 ACP（OPENCHAMBER_ACP_ENABLED）。已改用 OpenCode，你选择的 ACP 智能体会被保留。',
 } as const;

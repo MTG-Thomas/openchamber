@@ -4,6 +4,7 @@
 // (agent-process-manager, acp-event-source, routes) have a single import
 // point. OpenCode remains the default backend; ACP is opt-in.
 
+import { isEnterpriseMode } from '../enterprise-mode.js';
 import { readAcpAgentConfig } from './acp-config.js';
 
 const isEnvFlagEnabled = (value) => {
@@ -18,7 +19,7 @@ const isEnvFlagEnabled = (value) => {
  * backend remains the default and fully functional (FR-2, NFR-1).
  */
 export const isAcpEnabled = () =>
-  isEnvFlagEnabled(process.env.OPENCHAMBER_ACP_ENABLED);
+  !isEnterpriseMode() && isEnvFlagEnabled(process.env.OPENCHAMBER_ACP_ENABLED);
 
 /**
  * Whether verbose ACP logging is enabled (raw notifications, full responses).

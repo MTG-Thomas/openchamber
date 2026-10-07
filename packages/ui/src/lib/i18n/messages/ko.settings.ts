@@ -2544,7 +2544,9 @@ export const settingsDict = {
   'settings.agentBackend.field.name': '에이전트 이름',
   'settings.agentBackend.field.command': '에이전트 명령',
   'settings.agentBackend.field.command.placeholder': '예: claude-code',
+  'settings.agentBackend.field.args': '인수 (JSON 배열)',
   'settings.agentBackend.field.enabled': '활성화됨',
   'settings.agentBackend.empty': '아직 구성된 ACP 에이전트가 없습니다.',
+  'settings.agentBackend.enterprise': 'ACP 제공자 설정은 OpenCode 관리 범위 밖이므로 기업 모드에서는 사용할 수 없습니다.',
   'settings.agentBackend.unavailable': '이 서버에서는 ACP가 활성화되어 있지 않습니다(OPENCHAMBER_ACP_ENABLED). 대신 OpenCode를 사용하며, ACP 에이전트 선택은 유지됩니다.',
 } as const;

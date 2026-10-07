@@ -83,6 +83,7 @@ export function createGlobalMessageStreamHub({
       directory,
       eventId,
       spaceId,
+      backendId: envelope?.backendId ?? 'opencode',
       serialize() {
         serializedFrame ??= serializeMessageStreamWsEvent(payload, { directory, eventId });
         return serializedFrame;
@@ -239,11 +240,7 @@ export function createGlobalMessageStreamHub({
       if (!payload || typeof payload !== 'object') return;
       const directory =
         typeof directoryArg === 'string' && directoryArg.length > 0 ? directoryArg : 'global';
-      const eventId = `acp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-      const normalized = normalizeEvent({ envelope: { directory, eventId }, payload });
-      for (const subscriber of Array.from(eventSubscribers)) {
-        notifySubscriber('event', subscriber, normalized);
-      }
+      coalescer.push({ envelope: { directory, backendId: 'acp' }, payload });
     },
     replayAfter(eventId) {
       if (!eventId) {

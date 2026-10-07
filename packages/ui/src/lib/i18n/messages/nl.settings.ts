@@ -2534,7 +2534,9 @@ export const settingsDict = {
   'settings.agentBackend.field.name': 'Agentnaam',
   'settings.agentBackend.field.command': 'Agentopdracht',
   'settings.agentBackend.field.command.placeholder': 'bijv. claude-code',
+  'settings.agentBackend.field.args': 'Argumenten (JSON-array)',
   'settings.agentBackend.field.enabled': 'Ingeschakeld',
   'settings.agentBackend.empty': 'Er zijn nog geen ACP-agents geconfigureerd.',
+  'settings.agentBackend.enterprise': 'ACP is niet beschikbaar in bedrijfsmodus omdat de providerconfiguratie buiten OpenCode valt.',
   'settings.agentBackend.unavailable': 'ACP is niet ingeschakeld op deze server (OPENCHAMBER_ACP_ENABLED). OpenCode wordt gebruikt; je ACP-agentkeuze blijft bewaard.',
 } as const;

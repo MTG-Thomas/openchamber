@@ -1,3 +1,5 @@
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 // ACP session model selection for the composer picker.
 //
 // The active ACP agent reports its selectable models per session; this store
@@ -10,7 +12,7 @@
 // to the agent badge and the per-reply footer still names the model in use.
 
 import { create } from 'zustand';
-import { getActiveAgentClient } from '@/lib/agent/active-client';
+import { getSessionAgentClient } from '@/lib/agent/active-client';
 import type { AgentModelConfig } from '@/lib/agent/types';
 
 type AcpModelStore = {
@@ -28,11 +30,17 @@ export const useAcpModelStore = create<AcpModelStore>((set, get) => ({
   loading: {},
 
   load: async (sessionId) => {
-    const client = getActiveAgentClient();
-    if (!sessionId || client.backend !== 'acp' || !client.listModels) return;
+    const runtimeId = getRuntimeKey();
+    if (!sessionId) return;
     set((state) => ({ loading: { ...state.loading, [sessionId]: true } }));
     try {
+      const client = getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId));
+      if (client.backend !== 'acp' || !client.listModels) {
+        set((state) => ({ loading: { ...state.loading, [sessionId]: false } }));
+        return;
+      }
       const config = await client.listModels(sessionId);
+      if (runtimeId !== getRuntimeKey()) return;
       set((state) => ({
         // `null` is a valid "this agent reports no model select", not a failure:
         // keep any existing entry out and let the badge render.
@@ -40,6 +48,7 @@ export const useAcpModelStore = create<AcpModelStore>((set, get) => ({
         loading: { ...state.loading, [sessionId]: false },
       }));
     } catch (error) {
+      if (runtimeId !== getRuntimeKey()) return;
       console.warn('[acp] failed to load session models', error);
       set((state) => ({ loading: { ...state.loading, [sessionId]: false } }));
     }
@@ -47,21 +56,29 @@ export const useAcpModelStore = create<AcpModelStore>((set, get) => ({
 
   select: async (sessionId, value) => {
     const current = get().bySession[sessionId];
-    const client = getActiveAgentClient();
-    if (!sessionId || !current || client.backend !== 'acp' || !client.setModel) return;
+    const runtimeId = getRuntimeKey();
+    if (!sessionId || !current) return;
     // Optimistic: the picker reflects the choice immediately; the agent's
     // response reconciles it, and a failure rolls back to the prior value.
     set((state) => ({
       bySession: { ...state.bySession, [sessionId]: { ...current, currentValue: value } },
     }));
     try {
+      const client = getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId));
+      if (client.backend !== 'acp' || !client.setModel) throw new Error('ACP model owner is unavailable');
       const updated = await client.setModel(sessionId, current.configId, value);
+      if (runtimeId !== getRuntimeKey()) return;
       if (updated) {
         set((state) => ({ bySession: { ...state.bySession, [sessionId]: updated } }));
       }
     } catch (error) {
+      if (runtimeId !== getRuntimeKey()) return;
       console.warn('[acp] failed to switch session model', error);
       set((state) => ({ bySession: { ...state.bySession, [sessionId]: current } }));
     }
   },
 }));
+
+subscribeRuntimeEndpointChanged((detail) => {
+  if (detail.runtimeKey !== detail.previousRuntimeKey) useAcpModelStore.setState({ bySession: {}, loading: {} });
+});

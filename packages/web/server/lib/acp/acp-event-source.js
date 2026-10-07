@@ -231,7 +231,7 @@ export class AcpEventSource {
       throw new Error('setConfigOption requires a configId');
     }
     const response = await this._ctx.request(acp.methods.agent.session.setConfigOption, {
-      sessionId: this.sessionID,
+      sessionId: this._current ?? this.sessionID,
       configId,
       value,
     });
@@ -439,6 +439,9 @@ export class AcpEventSource {
         const notification = message?.notification;
         if (notification) {
           const updateKind = notification?.update?.sessionUpdate;
+          // The accepted prompt already echoed the client's optimistic message ID.
+          // Agent echoes are not additional user messages; replay has its own path.
+          if (updateKind === 'user_message_chunk') continue;
           const events = acpUpdateToEvents(notification, ctx(), this._acc);
           const dirLabel = dir || '(none)';
           console.log('[acp] update sessionUpdate=' + updateKind + ' translated=' + events.length + ' session=' + tag + ' dir=' + dirLabel);

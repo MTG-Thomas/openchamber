@@ -356,3 +356,18 @@ describe('events of isolated spaces in the global hub', () => {
     expect(seen).toEqual([null, null]);
   });
 });
+
+it('publishes ACP events through numbered replay for reconnecting clients', async () => {
+  const hub = createGlobalMessageStreamHub({
+    buildOpenCodeUrl: () => 'http://unused.test', getOpenCodeAuthHeaders: () => ({}), deltaCoalesceWindowMs: 0,
+  });
+  const received = [];
+  const unsubscribe = hub.subscribeEvent((event) => received.push(event), { spaces: true });
+  try {
+    hub.publishEvent({ type: 'session.execution.started', properties: { sessionID: 'muse' } }, { directory: '/repo' });
+    hub.publishEvent({ type: 'session.execution.succeeded', properties: { sessionID: 'muse' } }, { directory: '/repo' });
+    await waitForAssertion(() => expect(received).toHaveLength(2));
+    expect(received.every((event) => event.backendId === 'acp' && event.directory === '/repo')).toBe(true);
+    expect(hub.replayAfter(received[0].eventId).map((event) => event.eventId)).toEqual([received[1].eventId]);
+  } finally { unsubscribe(); hub.stop(); }
+});

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { ModelRef, Metadata, Session, TokenUsageInfo } from "../opencode/model";
 import type { ContextPartMetadata } from "@/lib/messages/contextParts";
 import type { SkillMentions } from "../opencode/client";
@@ -15,14 +16,12 @@ export type AgentBackendType = "opencode" | "acp";
  */
 export const ACP_SESSION_METADATA: Metadata = {
   openchamber: { acp: true },
-} as Metadata;
-
-export const isAcpSessionRecord = (session: { metadata?: Metadata } | undefined): boolean => {
-  // SAFETY: metadata values are JsonValue; the ACP marker's shape is owned by
-  // this module (ACP_SESSION_METADATA) and re-narrowed here.
-  const namespace = session?.metadata?.openchamber as { acp?: unknown } | undefined;
-  return namespace?.acp === true;
 };
+
+const acpMarkerSchema = z.object({ acp: z.literal(true) });
+export const acpSessionOwnerSchema = acpMarkerSchema.extend({ agentId: z.string().min(1) });
+export const isAcpSessionRecord = (session: { metadata?: Metadata } | undefined): boolean =>
+  acpMarkerSchema.safeParse(session?.metadata?.openchamber).success;
 
 /** Zero usage, matching the shape projected assistant messages carry. */
 export const ZERO_TOKEN_USAGE: TokenUsageInfo = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };

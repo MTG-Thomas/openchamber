@@ -2547,4 +2547,6 @@ export const settingsDict = {
   "settings.agentBackend.field.enabled": "Увімкнено",
   "settings.agentBackend.empty": "Агентів ACP ще не налаштовано.",
   "settings.agentBackend.unavailable": "ACP не ввімкнено на цьому сервері (OPENCHAMBER_ACP_ENABLED). Замість нього використовується OpenCode; ваш вибір агента ACP збережено.",
+  "settings.agentBackend.field.args": "Аргументи (масив JSON)",
+  "settings.agentBackend.enterprise": "ACP недоступний у корпоративному режимі, оскільки налаштування провайдерів перебувають поза OpenCode.",
 } as const;

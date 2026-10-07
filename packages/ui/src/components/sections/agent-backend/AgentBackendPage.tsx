@@ -1,4 +1,6 @@
+import { useEnterpriseMode } from '@/stores/useEnterprisePolicyStore';
 import React from 'react';
+import { z } from 'zod';
 import { useI18n } from '@/lib/i18n';
 import { useAgentBackendStore } from '@/stores/useAgentBackendStore';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
@@ -16,6 +18,26 @@ import { Input } from '@/components/ui/input';
 // (OpenCode default, or a configured ACP stdio agent) and manage ACP agent
 // configs. Selecting ACP installs an AcpClient as the active agent client.
 
+const argumentSchema = z.array(z.string());
+
+function AgentArguments({ id, args, update }: { id: string; args: string[]; update: (args: string[]) => void }) {
+  const { t } = useI18n();
+  const [value, setValue] = React.useState(JSON.stringify(args));
+  const [invalid, setInvalid] = React.useState(false);
+  React.useEffect(() => { setValue(JSON.stringify(args)); setInvalid(false); }, [args]);
+  const commit = () => {
+    try {
+      const parsed = argumentSchema.safeParse(JSON.parse(value));
+      if (!parsed.success) { setInvalid(true); return; }
+      setInvalid(false); update(parsed.data);
+    } catch { setInvalid(true); }
+  };
+  return <Input id={`agent-args-${id}`} value={value} onChange={(e) => setValue(e.target.value)}
+    onBlur={commit} aria-invalid={invalid} aria-label={t('settings.agentBackend.field.args')}
+    placeholder={t('settings.agentBackend.field.args')} />;
+}
+const EMPTY_ARGS: string[] = [];
+
 const BACKEND_OPTIONS = [
   { value: 'opencode', labelKey: 'settings.agentBackend.backend.opencode' },
   { value: 'acp', labelKey: 'settings.agentBackend.backend.acp' },
@@ -23,6 +45,7 @@ const BACKEND_OPTIONS = [
 
 export function AgentBackendPage() {
   const { t } = useI18n();
+  const enterpriseMode = useEnterpriseMode();
   const activeBackend = useAgentBackendStore((s) => s.activeBackend);
   const activeAcpAgentId = useAgentBackendStore((s) => s.activeAcpAgentId);
   const agents = useAgentBackendStore((s) => s.agents);
@@ -31,6 +54,10 @@ export function AgentBackendPage() {
   const addAgent = useAgentBackendStore((s) => s.addAgent);
   const updateAgent = useAgentBackendStore((s) => s.updateAgent);
   const removeAgent = useAgentBackendStore((s) => s.removeAgent);
+
+  if (enterpriseMode) return <SettingsPageLayout title={t('settings.page.agentBackend.title')} showSaveStatus={false}>
+    <p className="typography-meta text-muted-foreground">{t('settings.agentBackend.enterprise')}</p>
+  </SettingsPageLayout>;
 
   return (
     <SettingsPageLayout title={t('settings.page.agentBackend.title')} showSaveStatus={false}>
@@ -114,6 +141,7 @@ export function AgentBackendPage() {
                       placeholder={t('settings.agentBackend.field.command.placeholder')}
                       aria-label={t('settings.agentBackend.field.command')}
                     />
+                    <AgentArguments id={agent.id} args={agent.args ?? EMPTY_ARGS} update={(args) => updateAgent(agent.id, { args })} />
                     <SettingsCheckboxRow
                       checked={agent.enabled}
                       onChange={(checked) => updateAgent(agent.id, { enabled: checked })}

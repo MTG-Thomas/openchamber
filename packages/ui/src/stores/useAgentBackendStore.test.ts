@@ -1,3 +1,4 @@
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import { describe, expect, mock, test, beforeEach } from 'bun:test';
 
 // The store imports AcpClient which calls runtimeFetch. Mock both so the store
@@ -59,7 +60,7 @@ describe('useAgentBackendStore', () => {
     expect(useAgentBackendStore.getState().activeAcpAgentId).toBe(id);
   });
 
-  test('disabling the selected agent resets to OpenCode (no valid ACP agent)', () => {
+  test('an incomplete selected ACP agent cannot silently create an OpenCode session', () => {
     const id = useAgentBackendStore.getState().addAgent({ name: 'pi', command: 'pi-acp', enabled: true });
     useAgentBackendStore.getState().setBackend('acp');
     useAgentBackendStore.getState().selectAcpAgent(id);
@@ -67,6 +68,7 @@ describe('useAgentBackendStore', () => {
     // applySelection resolves no active ACP agent -> resets to OpenCode default
     expect(useAgentBackendStore.getState().activeBackend).toBe('acp'); // backend flag unchanged...
     expect(useAgentBackendStore.getState().activeAcpAgentId).toBe(id); // ...but no enabled agent matches
+    expect(getActiveAgentClient().backend).toBe('acp'); // fails visibly, cannot create an OpenCode session
   });
 
   test('a stored ACP choice is not used while the server reports ACP disabled, and is kept', async () => {
@@ -93,7 +95,7 @@ describe('useAgentBackendStore', () => {
 
     // Editing settings meanwhile must not overwrite the stored choice.
     useAgentBackendStore.getState().updateAgent(id, { name: 'pi 2' });
-    const stored = JSON.parse(localStorage.getItem('openchamber.agent-backend.v1') ?? '{}');
+    const stored = JSON.parse(localStorage.getItem(`openchamber.agent-backend.v2:${getRuntimeKey()}`) ?? '{}');
     expect(stored.activeBackend).toBe('acp');
     expect(stored.activeAcpAgentId).toBe(id);
 

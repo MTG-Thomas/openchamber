@@ -153,3 +153,13 @@ describe('AcpEventSource history loads (serialization)', () => {
     expect(await turn).toBe('end_turn');
   }, 15000);
 });
+
+it('reconciles the accepted user message once when an agent echoes it', async () => {
+  const hub = captureHub();
+  const source = await startSource({ command: process.execPath, args: [mockAgentPath],
+    env: { MOCK_AGENT_ECHO_USER: '1' }, cwd: process.cwd(), hub });
+  await source.prompt({ text: 'echo me', userMessageId: 'client-message' });
+  const echoes = hub.events.filter((event) => event.type === 'session.inbox.enqueued');
+  expect(echoes).toHaveLength(1);
+  expect(echoes[0].data.inboxID).toBe('client-message');
+});

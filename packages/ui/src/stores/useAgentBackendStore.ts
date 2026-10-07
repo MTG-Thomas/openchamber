@@ -1,3 +1,4 @@
+import { getRuntimeKey, subscribeRuntimeEndpointChanged, isTransientRuntimeKey } from '@/lib/runtime-switch';
 // Agent backend selection store. Per decision FEAT-2010-DEC-1, one backend is
 // active at a time (OpenCode default). Selecting ACP constructs an AcpClient
 // from the configured agent and installs it as the active agent client; the
@@ -8,34 +9,27 @@ import { z } from 'zod';
 import { toast } from '@/components/ui';
 import { formatMessage, useI18nStore } from '@/lib/i18n';
 import { AcpClient } from '@/lib/agent/acp-client';
-import { setActiveAgentClient } from '@/lib/agent/active-client';
+import { setActiveAgentClient, replaceSessionAgentClients } from '@/lib/agent/active-client';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import type { AgentSelectionState } from '@/lib/agent/config';
 import type { AgentBackendType, AcpAgentConfig } from '@/lib/agent/config';
 
-const STORAGE_KEY = 'openchamber.agent-backend.v1';
+const STORAGE_KEY = 'openchamber.agent-backend.v2';
+const storageKey = () => `${STORAGE_KEY}:${getRuntimeKey()}`;
 
 type PersistedState = AgentSelectionState;
 
 const DEFAULT_STATE: PersistedState = { activeBackend: 'opencode', activeAcpAgentId: null, agents: [] };
 
-const isValidAgentConfig = (value: unknown): value is AcpAgentConfig => {
-  if (!value || typeof value !== 'object') return false;
-  // SAFETY: value passed the object check above; command presence is the config contract.
-  return typeof (value as AcpAgentConfig).command === 'string';
-};
-
-// Parse a persisted payload; malformed data falls back to defaults (never
-// partial state). Every field is validated before use.
+const persistedSchema = z.object({
+  activeBackend: z.enum(['opencode', 'acp']),
+  activeAcpAgentId: z.string().nullable(),
+  agents: z.array(z.object({ id: z.string().min(1), name: z.string(), command: z.string(),
+    args: z.array(z.string()).optional(), env: z.record(z.string(), z.string()).optional(), enabled: z.boolean() })),
+});
 const parsePersisted = (raw: unknown): PersistedState => {
-  if (!raw || typeof raw !== 'object') return DEFAULT_STATE;
-  // SAFETY: raw passed the object check above; fields are validated below.
-  const record = raw as Record<string, unknown>;
-  return {
-    activeBackend: record.activeBackend === 'acp' ? 'acp' : 'opencode',
-    activeAcpAgentId: typeof record.activeAcpAgentId === 'string' ? record.activeAcpAgentId : null,
-    agents: Array.isArray(record.agents) ? record.agents.filter(isValidAgentConfig) : [],
-  };
+  const parsed = persistedSchema.safeParse(raw);
+  return parsed.success ? parsed.data : DEFAULT_STATE;
 };
 
 const loadPersisted = (): PersistedState => {
@@ -43,7 +37,7 @@ const loadPersisted = (): PersistedState => {
     return DEFAULT_STATE;
   }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     if (!raw) return DEFAULT_STATE;
     return parsePersisted(JSON.parse(raw));
   } catch {
@@ -54,7 +48,7 @@ const loadPersisted = (): PersistedState => {
 const persist = (state: PersistedState) => {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(storageKey(), JSON.stringify(state));
   } catch {
     // Best-effort persistence.
   }
@@ -74,7 +68,10 @@ const resolveActiveAcpAgent = (state: PersistedState): AcpAgentConfig | null => 
 // Persist to the server so the server can initialize the agent at startup.
 // Called alongside localStorage on every settings change.
 const persistToServer = (state: PersistedState) => {
+  if (isTransientRuntimeKey(getRuntimeKey())) return;
   const agent = resolveActiveAcpAgent(state);
+  // Choosing OpenCode for a new session must not tear down existing ACP turns.
+  if (!agent) return;
   const body = agent
     ? { command: agent.command, args: agent.args, env: agent.env, agentName: agent.name, agentId: agent.id }
     : { command: '' }; // empty = clear
@@ -89,6 +86,8 @@ const persistToServer = (state: PersistedState) => {
 
 // Apply the selection to the active-client selector. Called on every change.
 const applySelection = (state: PersistedState) => {
+  replaceSessionAgentClients(state.agents.map((agent) => [agent.id, new AcpClient({ command: agent.command, args: agent.args,
+    env: agent.env, agentId: agent.id, name: agent.name })]));
   const acpAgent = resolveActiveAcpAgent(state);
   if (acpAgent) {
     setActiveAgentClient(
@@ -101,8 +100,8 @@ const applySelection = (state: PersistedState) => {
       }),
     );
   } else {
-    // OpenCode default (or ACP selected but no valid agent configured).
-    setActiveAgentClient(null);
+    // An incomplete ACP configuration must fail visibly, never create an OpenCode session.
+    setActiveAgentClient(state.activeBackend === 'acp' && !acpDisabledByServer ? new AcpClient({ command: '' }) : null);
   }
 };
 
@@ -143,13 +142,15 @@ const commit = (next: PersistedState): Partial<AgentBackendStore> => {
   };
 };
 
-const acpStatusSchema = z.object({ enabled: z.boolean() });
+const acpStatusSchema = z.object({ enabled: z.boolean(), agent: persistedSchema.shape.agents.element.nullable().optional() });
 
 // Ask the server whether ACP is enabled. A stored ACP selection is not used
 // when it is not: fall back to OpenCode, say so, and keep the stored choice.
 // Anything other than a clear answer (network error, 5xx) changes nothing.
 export const refreshAcpAvailability = async (): Promise<void> => {
+  const runtimeId = getRuntimeKey();
   let disabled: boolean;
+  let discovered: AcpAgentConfig | null = null;
   try {
     const response = await runtimeFetch('/api/agent/acp/status', { headers: { Accept: 'application/json' } });
     if (response.status === 404) {
@@ -158,11 +159,19 @@ export const refreshAcpAvailability = async (): Promise<void> => {
       const parsed = acpStatusSchema.safeParse(await response.json().catch(() => null));
       if (!parsed.success) return;
       disabled = !parsed.data.enabled;
+      discovered = parsed.data.agent ?? null;
     } else {
       return;
     }
   } catch {
     return;
+  }
+  if (runtimeId !== getRuntimeKey()) return;
+  if (discovered) {
+    const current = selectionOf(useAgentBackendStore.getState());
+    const selection = { ...current, agents: [...current.agents.filter((agent) => agent.id !== discovered.id), discovered] };
+    persist(selection); applySelection(selection);
+    useAgentBackendStore.setState({ agents: selection.agents });
   }
   if (disabled === acpDisabledByServer) return;
   acpDisabledByServer = disabled;
@@ -216,3 +225,12 @@ export const useAgentBackendStore = create<AgentBackendStore>((set, get) => ({
   },
 }));
 
+
+subscribeRuntimeEndpointChanged((detail) => {
+  if (detail.runtimeKey === detail.previousRuntimeKey) return;
+  acpDisabledByServer = false;
+  const selection = loadPersisted();
+  applySelection(selection);
+  useAgentBackendStore.setState({ ...selection, storedBackend: null });
+  void refreshAcpAvailability();
+});

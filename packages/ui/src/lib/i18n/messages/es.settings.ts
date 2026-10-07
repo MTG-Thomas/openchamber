@@ -2547,4 +2547,6 @@ export const settingsDict = {
   "settings.agentBackend.field.enabled": "Activado",
   "settings.agentBackend.empty": "Aún no hay agentes ACP configurados.",
   "settings.agentBackend.unavailable": "ACP no está habilitado en este servidor (OPENCHAMBER_ACP_ENABLED). Se usa OpenCode en su lugar; se conserva tu elección de agente ACP.",
+  "settings.agentBackend.field.args": "Argumentos (matriz JSON)",
+  "settings.agentBackend.enterprise": "ACP no está disponible en modo empresarial porque su configuración de proveedores es externa a OpenCode.",
 } as const;

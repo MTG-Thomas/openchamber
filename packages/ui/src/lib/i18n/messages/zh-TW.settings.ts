@@ -2544,7 +2544,9 @@ export const settingsDict = {
   'settings.agentBackend.field.name': '代理程式名稱',
   'settings.agentBackend.field.command': '代理程式命令',
   'settings.agentBackend.field.command.placeholder': '例如 claude-code',
+  'settings.agentBackend.field.args': '參數（JSON 陣列）',
   'settings.agentBackend.field.enabled': '已啟用',
   'settings.agentBackend.empty': '尚未設定任何 ACP 代理程式。',
+  'settings.agentBackend.enterprise': 'ACP 的供應商設定不受 OpenCode 管理，因此企業模式下無法使用。',
   'settings.agentBackend.unavailable': '此伺服器未啟用 ACP（OPENCHAMBER_ACP_ENABLED）。已改用 OpenCode，你選擇的 ACP 代理程式會被保留。',
 } as const;

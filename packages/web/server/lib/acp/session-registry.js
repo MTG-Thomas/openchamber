@@ -15,6 +15,8 @@
 
 const records = new Map(); // sessionId -> { id, directory, title, created, updated }
 let owner = null;
+let agentId = 'acp-agent';
+export const setRegistryAgentId = (value) => { agentId = value; };
 
 const ZERO_TOKENS = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
 
@@ -81,7 +83,7 @@ const toSessionInfo = (record) => ({
   tokens: ZERO_TOKENS,
   time: { created: record.created, updated: record.updated },
   location: { directory: record.directory },
-  metadata: { openchamber: { acp: true } },
+  metadata: { openchamber: { acp: true, agentId } },
 });
 
 /** The OpenCode 2.x `SessionInfo` for one known session, or null. */

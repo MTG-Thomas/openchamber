@@ -2534,7 +2534,9 @@ export const settingsDict = {
   'settings.agentBackend.field.name': 'Agent name',
   'settings.agentBackend.field.command': 'Agent command',
   'settings.agentBackend.field.command.placeholder': 'e.g. claude-code',
+  'settings.agentBackend.field.args': 'Arguments (JSON array)',
   'settings.agentBackend.field.enabled': 'Enabled',
   'settings.agentBackend.empty': 'No ACP agents configured yet.',
+  'settings.agentBackend.enterprise': 'ACP is unavailable in enterprise mode because its provider configuration is outside OpenCode.',
   'settings.agentBackend.unavailable': 'ACP is not enabled on this server (OPENCHAMBER_ACP_ENABLED). Using OpenCode instead; your ACP agent choice is kept.',
 } as const;

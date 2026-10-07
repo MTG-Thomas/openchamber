@@ -23,6 +23,12 @@ describe('isAcpEnabled', () => {
     expect(isAcpEnabled()).toBe(expected);
   });
 
+  it('refuses ACP in enterprise mode even when explicitly enabled', () => {
+    process.env.OPENCHAMBER_ACP_ENABLED = '1';
+    process.env.OPENCHAMBER_ENTERPRISE_MODE = '1';
+    try { expect(isAcpEnabled()).toBe(false); } finally { delete process.env.OPENCHAMBER_ENTERPRISE_MODE; }
+  });
+
   it('defaults to off (OpenCode remains the default backend)', () => {
     delete process.env.OPENCHAMBER_ACP_ENABLED;
     expect(isAcpEnabled()).toBe(false);

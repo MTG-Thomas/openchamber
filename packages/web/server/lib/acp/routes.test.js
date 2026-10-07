@@ -263,7 +263,7 @@ describe('ACP sessions in the session lists and by-id reads', () => {
     expect(global.body.data.map((s) => s.id)).toEqual(['oc-1', sessionID]);
     const acp = global.body.data.find((s) => s.id === sessionID);
     expect(acp.location).toEqual({ directory: process.cwd() });
-    expect(acp.metadata).toEqual({ openchamber: { acp: true } });
+    expect(acp.metadata).toEqual({ openchamber: { acp: true, agentId: 'acp-agent' } });
 
     const scoped = await request(app, 'get', `/api/session?limit=100&directory=${encodeURIComponent(process.cwd())}`);
     expect(scoped.body.data.map((s) => s.id)).toContain(sessionID);
@@ -511,12 +511,57 @@ describe('ACP prompt routing, agent identity, start races and delete', () => {
     expect(get.statusCode).toBe(404);
   }, 20000);
 
+  it('rejects wrong backend/session ownership and unsupported OpenCode mutations', async () => {
+    const { app } = build();
+    const id = (await init(app)).body.sessionID;
+    const wrong = await request(app, 'post', '/api/agent/acp/session/prompt', { sessionID: id, agentId: 'other', text: 'do not send' });
+    expect(wrong.statusCode).toBe(409);
+    expect((await request(app, 'post', '/api/agent/acp/session/cancel', { sessionID: 'unknown', agentId: 'mock' })).statusCode).toBe(404);
+    expect((await request(app, 'post', '/api/session/' + id + '/message', { text: 'unsupported' })).statusCode).toBe(405);
+    expect((await request(app, 'get', '/api/session/' + id + '/diff')).statusCode).toBe(404);
+  });
+
   it('reports whether ACP is enabled, also while it is disabled', async () => {
     const { app } = build();
-    expect((await request(app, 'get', '/api/agent/acp/status')).body).toEqual({ enabled: true });
+    expect((await request(app, 'get', '/api/agent/acp/status')).body).toMatchObject({ enabled: true });
     process.env.OPENCHAMBER_ACP_ENABLED = 'false';
     const off = await request(app, 'get', '/api/agent/acp/status');
     expect(off.statusCode).toBe(200);
     expect(off.body).toEqual({ enabled: false });
+  });
+});
+
+ describe('backend-native ID ambiguity', () => {
+  it('refuses creation when OpenCode already owns the returned ACP ID', async () => {
+    const app = express();
+    registerAcpRoutes(app, { globalMessageStreamHub: captureHub(), openCodeSessionExists: async () => true });
+    const result = await request(app, 'post', '/api/agent/acp/initialize', {
+      command: process.execPath, args: [mockAgentPath], agentId: 'mock',
+    });
+    expect(result.statusCode).toBe(409);
+    expect(result.body.error).toContain('both OpenCode and ACP');
+  });
+  it('refuses reads and controls if an ID becomes ambiguous after creation', async () => {
+    let collision = false;
+    const app = express();
+    registerAcpRoutes(app, { globalMessageStreamHub: captureHub(), openCodeSessionExists: async () => collision });
+    app.use('/api', acpSessionInterceptor);
+    const init = await request(app, 'post', '/api/agent/acp/initialize', {
+      command: process.execPath, args: [mockAgentPath], agentId: 'mock',
+    });
+    expect(init.statusCode).toBe(200);
+    collision = true;
+    expect((await request(app, 'get', `/api/session/${init.body.sessionID}/message`)).statusCode).toBe(409);
+    expect((await request(app, 'post', '/api/agent/acp/session/prompt', {
+      agentId: 'mock', sessionID: init.body.sessionID, text: 'must not run',
+    })).statusCode).toBe(409);
+  });
+  it('fails visibly when the backend owner cannot be verified', async () => {
+    const app = express();
+    registerAcpRoutes(app, { globalMessageStreamHub: captureHub(), openCodeSessionExists: async () => { throw new Error('offline'); } });
+    const result = await request(app, 'post', '/api/agent/acp/initialize', {
+      command: process.execPath, args: [mockAgentPath], agentId: 'mock',
+    });
+    expect(result.statusCode).toBe(503);
   });
 });

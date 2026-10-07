@@ -16,6 +16,7 @@ import { writeAcpAgentConfig, clearAcpAgentConfig } from './acp-config.js';
 import { getTranscript, deleteTranscript } from './session-transcript.js';
 import {
   setRegistryOwner,
+  setRegistryAgentId,
   hasAcpSession,
   acpSessionCount,
   acpSessionDirectories,
@@ -30,6 +31,19 @@ import {
 
 let activeSource = null;
 let activeConfig = null;
+let openCodeSessionExists = null;
+// Foreground stores still use native IDs. Refuse an ambiguous ID rather than
+// serving the other backend's transcript or applying a control to it.
+const assertUnambiguousSession = async (sessionId, res) => {
+  if (!openCodeSessionExists) return true;
+  try {
+    if (!await openCodeSessionExists(sessionId)) return true;
+    json(res, 409, { error: 'Session ID belongs to both OpenCode and ACP; backend aliasing is required' });
+  } catch {
+    json(res, 503, { error: 'Cannot verify session backend ownership' });
+  }
+  return false;
+};
 // The model the user last chose via the config route. Each /initialize starts a
 // fresh session on the agent's default model, so this is re-applied after every
 // start: picking a model before a session exists (new-session composer) must
@@ -150,7 +164,7 @@ export async function getAcpSessionMessages(sessionId) {
 
   const loader = (async () => {
     try {
-      const events = await activeSource.loadSession(sessionId, {});
+      const events = await activeSource.loadSession(sessionId, { directory: getAcpSessionDirectory(sessionId) });
       const messages = eventsToOpenCodeMessages(events);
       sessionMessageCache.set(sessionId, { messages, timestamp: Date.now() });
       return messages;
@@ -308,8 +322,11 @@ export const acpSessionInterceptor = async (req, res, next) => {
   let sessionId = match[1];
   try { sessionId = decodeURIComponent(sessionId); } catch { /* keep raw id */ }
   if (!hasAcpSession(sessionId)) return next();
+  if (!await assertUnambiguousSession(sessionId, res)) return res;
 
-  if (req.path.includes('/message')) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'This OpenCode operation is unavailable for ACP sessions' });
+
+  if (/^\/session\/[^/]+\/message$/.test(req.path)) {
     try {
       const messages = await getAcpSessionMessages(sessionId);
       return res.status(200).json({ data: messages, cursor: {} });
@@ -318,6 +335,8 @@ export const acpSessionInterceptor = async (req, res, next) => {
       return res.status(502).json({ error: `ACP session history unavailable: ${error?.message ?? 'unknown error'}` });
     }
   }
+
+  if (!/^\/session\/[^/]+$/.test(req.path)) return res.status(404).json({ error: 'Unsupported ACP session read' });
 
   // session.get — the session's OpenCode 2.x record (directory included).
   return res.status(200).json({ data: getAcpSessionInfo(sessionId) });
@@ -379,7 +398,7 @@ export async function initAcpOnStartup(hub, setSessionStatus) {
   startupLoop = loop;
 
   // Retry indefinitely — the agent may need multiple warm-up attempts.
-  while (!loop.cancelled) {
+  while (!loop.cancelled && attempt < 3) {
     attempt += 1;
     console.log(`[acp] startup init (attempt ${attempt}): command=${config.command}`);
     const source = new AcpEventSource({
@@ -400,6 +419,7 @@ export async function initAcpOnStartup(hub, setSessionStatus) {
       activeSource = source;
       activeConfig = { command: config.command, agentId: config.agentId, identity };
       adoptAgent(identity);
+      setRegistryAgentId(config.agentId ?? 'acp-agent');
       console.log(`[acp] startup init complete: sessionId=${source.sessionID}`);
       // The agent's existing sessions for the project directory; the session
       // created above stays unlisted until the user sends its first prompt.
@@ -424,6 +444,16 @@ export async function initAcpOnStartup(hub, setSessionStatus) {
 export function registerAcpRoutes(app, options = {}) {
   if (!app) return;
   const hub = options.globalMessageStreamHub;
+  openCodeSessionExists = options.openCodeSessionExists ?? null;
+  // Ownership is checked at the runtime boundary, including cancel/permissions.
+  app.use('/api/agent/acp/session', express.json({ limit: '1mb' }), async (req, res, next) => {
+    const agentId = req.body?.agentId ?? req.query?.agentId;
+    if (agentId && agentId !== activeConfig?.agentId) return json(res, 409, { error: 'ACP backend owner changed; reconnect the owning agent' });
+    const sessionId = req.body?.sessionID ?? req.body?.sessionId ?? req.query?.sessionID;
+    if (sessionId && !hasAcpSession(sessionId)) return json(res, 404, { error: 'Unknown ACP session owner' });
+    if (sessionId && !await assertUnambiguousSession(sessionId, res)) return res;
+    return next();
+  });
   const setSessionStatus = options.setSessionStatus;
 
   // Persist the ACP agent config when the user changes it in settings.
@@ -441,6 +471,7 @@ export function registerAcpRoutes(app, options = {}) {
     }
     const command = body.command.trim();
     const identity = agentIdentity({ command, args: body.args, env: body.env, agentId: body.agentId });
+    if (activeSource?.isBusy() && activeConfig?.identity !== identity) return json(res, 409, { error: 'Finish or cancel the running ACP turn before changing agents' });
     if (activeConfig?.identity !== identity) {
       // A different launch configuration: the running agent (or one still
       // starting) no longer matches the settings.
@@ -460,7 +491,13 @@ export function registerAcpRoutes(app, options = {}) {
 
   // Whether this server has ACP enabled. Answered even when it is not, so the
   // UI can tell "disabled" from "unreachable" and avoid a stored ACP selection.
-  app.get('/api/agent/acp/status', (_req, res) => json(res, 200, { enabled: isAcpEnabled() }));
+  app.get('/api/agent/acp/status', (_req, res) => {
+    const enabled = isAcpEnabled();
+    const config = enabled ? getStartupAcpConfig() : null;
+    const agent = config ? { id: config.agentId || 'acp-agent', name: config.agentName || 'ACP',
+      command: config.command, args: config.args, enabled: true } : null;
+    return json(res, 200, { enabled, ...(agent ? { agent } : {}) });
+  });
 
   app.post('/api/agent/acp/initialize', express.json({ limit: "1mb" }), async (req, res) => {
     if (!ensureEnabled(res)) return;
@@ -472,6 +509,8 @@ export function registerAcpRoutes(app, options = {}) {
       // never tear down a working agent connection.
       return json(res, 400, { error: 'Missing required field: command' });
     }
+
+    if (activeSource?.isBusy()) return json(res, 409, { error: 'Finish or cancel the running ACP turn before creating another session' });
 
     // Replace any active source (single-client-at-a-time). Always create a
     // fresh connection + session: reusing the existing session would
@@ -499,8 +538,10 @@ export function registerAcpRoutes(app, options = {}) {
       activeSource = source;
       activeConfig = { command, agentId: body.agentId, identity };
       adoptAgent(identity);
+      setRegistryAgentId(body.agentId ?? 'acp-agent');
       const directory = source.options.directory || source.options.cwd || process.cwd();
       upsertAcpSession({ id: session.sessionId, directory });
+      if (!await assertUnambiguousSession(session.sessionId, res)) return res;
       acpTelemetry.initializeResult(body.agentId, 'success', Date.now() - startedAt);
       acpTelemetry.sessionCreated(body.agentId);
       // The agent's earlier sessions in this directory join the registry, so
@@ -520,7 +561,7 @@ export function registerAcpRoutes(app, options = {}) {
       await applyStickyModel(source);
       return json(res, 200, {
         sessionID: session.sessionId,
-        capabilities: source.options,
+        capabilities: source._connection?.initializeResult?.agentCapabilities ?? {},
         backend: 'acp',
         sessions: existingSessions,
         configOptions: source.listConfigOptions?.() ?? [],
@@ -592,6 +633,9 @@ export function registerAcpRoutes(app, options = {}) {
       return json(res, 409, { error: 'No active ACP session' });
     }
     try {
+      if (req.body?.sessionID && activeSource._activeTag && req.body.sessionID !== activeSource._activeTag) {
+        return json(res, 409, { error: 'The running turn belongs to another ACP session' });
+      }
       activeSource.cancel?.();
       return json(res, 202, { ok: true });
     } catch (error) {
@@ -616,6 +660,7 @@ export function registerAcpRoutes(app, options = {}) {
     if (reply !== 'once' && reply !== 'always' && reply !== 'reject') {
       return json(res, 400, { error: 'Invalid reply (expected once, always, or reject)' });
     }
+    if (body.sessionID && body.sessionID !== activeSource._activeTag) return json(res, 409, { error: 'Permission belongs to another ACP session' });
     if (!activeSource.resolvePermission(requestID, reply)) {
       return json(res, 404, { error: 'No pending permission request with that id' });
     }
@@ -624,10 +669,15 @@ export function registerAcpRoutes(app, options = {}) {
 
   // Agent-reported session configuration (models, thinking, ...). The composer
   // model picker lists the options and switches the model through this route.
-  app.get('/api/agent/acp/session/config', (_req, res) => {
+  app.get('/api/agent/acp/session/config', async (req, res) => {
     if (!ensureEnabled(res)) return;
     if (!activeSource) {
       return json(res, 409, { error: 'No active ACP session' });
+    }
+    const target = req.query.sessionID;
+    if (target && target !== activeSource._current) {
+      if (activeSource.isBusy()) return json(res, 409, { error: 'ACP agent is busy in another session' });
+      try { await activeSource.switchTo(target); } catch (error) { return json(res, 502, { error: error.message }); }
     }
     return json(res, 200, {
       configOptions: activeSource.listConfigOptions?.() ?? [],
@@ -649,6 +699,8 @@ export function registerAcpRoutes(app, options = {}) {
       return json(res, 400, { error: 'Missing required field: value' });
     }
     try {
+      if (activeSource.isBusy()) return json(res, 409, { error: 'ACP agent is busy' });
+      if (body.sessionID) await activeSource.switchTo(body.sessionID);
       const configOptions = await activeSource.setConfigOption(configId, body.value);
       // Remember the choice so every session this agent creates starts on it.
       stickyModel = { configId, value: body.value };
@@ -683,7 +735,7 @@ export function registerAcpRoutes(app, options = {}) {
   // Session lifecycle: list / delete existing agent sessions (FR-9).
   app.get('/api/agent/acp/sessions', async (req, res) => {
     if (!ensureEnabled(res)) return;
-    if (!activeSource) return json(res, 200, { sessions: [] });
+    if (!activeSource) return json(res, 409, { error: 'ACP agent is not connected' });
     try {
       const cwd = typeof req.query.cwd === 'string' ? req.query.cwd : undefined;
       const sessions = await activeSource.listSessions(cwd);
@@ -713,8 +765,11 @@ export function registerAcpRoutes(app, options = {}) {
 
 /** Test helper: reset module-level state between route tests. */
 export const _resetAcpRoutesState = async () => {
+  openCodeSessionExists = null;
   stickyModel = null;
   await teardownActive();
   sessionRefreshedAt.clear();
   _resetAcpSessionRegistry();
 };
+
+export const stopAcpRuntime = async () => { await teardownActive(); };

@@ -17,9 +17,8 @@ import { useAgentBackendStore } from "@/stores/useAgentBackendStore"
 import { opencodeClient, type SyntheticContextInput } from "@/lib/opencode/client"
 import { toJsonRecord } from "@/lib/opencode/json"
 import { ascendingId } from "@/lib/opencode/ids"
-import { getActiveAgentClient } from "@/lib/agent/active-client"
+import { getActiveAgentClient, getSessionAgentClient } from "@/lib/agent/active-client"
 import { isAcpSession } from "@/lib/agent/is-acp-session"
-import { ACP_SESSION_METADATA, ZERO_TOKEN_USAGE } from "@/lib/agent/types"
 import { mergeSessionDirectoryMetadata, resolveGlobalSessionDirectory, useGlobalSessionsStore } from "@/stores/useGlobalSessionsStore"
 import { useConfigStore } from "@/stores/useConfigStore"
 import { registerSessionDirectory } from "./sync-refs"
@@ -1015,37 +1014,6 @@ export async function createSession(
     useSessionUIStore.getState().markSessionAsOpenChamberCreated(session.id)
     useGlobalSessionsStore.getState().upsertSession(session)
 
-    // When the ACP backend is active, populate the sidebar with the agent's
-    // existing sessions (returned by /initialize alongside the new session).
-    if (useAgentBackendStore.getState().activeBackend === "acp") {
-      try {
-        const client = getActiveAgentClient();
-        // SAFETY: only AcpClient exposes initSessions; the cast reads the
-        // optional sidebar payload without changing routing behavior.
-        const acpClient = client as { initSessions?: Array<{ id: string; title?: string }> };
-        if (acpClient.initSessions) {
-          const now = Date.now();
-          for (const s of acpClient.initSessions) {
-            if (s.id === session.id) continue;
-            const acpSession: Session = {
-              id: s.id,
-              projectID: "",
-              directory: sessionDirectory ?? "",
-              title: s.title ?? "ACP session",
-              cost: 0,
-              tokens: ZERO_TOKEN_USAGE,
-              time: { created: now, updated: now },
-              metadata: ACP_SESSION_METADATA,
-            };
-            useGlobalSessionsStore.getState().upsertSession(acpSession);
-            mirrorSessionIntoLiveStores(acpSession, sessionDirectory ?? undefined);
-          }
-        }
-      } catch {
-        // Best-effort sidebar population.
-      }
-    }
-
     return session
   } catch (error) {
     console.error("[session-actions] createSession failed", error)
@@ -2028,7 +1996,7 @@ export async function optimisticSend(input: {
   assertRuntimeUnchanged()
   // The OpenCode connection gate must not block ACP prompts: the ACP backend
   // owns its transport and surfaces its own failures (FR-6 isolation).
-  if (useAgentBackendStore.getState().activeBackend !== "acp") {
+  if (!isAcpSession(input.sessionId)) {
     await waitForConnectionOrThrow()
   }
   input.beforeOptimisticInsert?.()
@@ -2290,7 +2258,7 @@ export async function abortCurrentOperation(sessionId: string): Promise<void> {
     // ACP turns run over the ACP connection, not OpenCode, so the OpenCode
     // abort would cancel nothing. Route the stop to the active agent client.
     try {
-      await getActiveAgentClient().abortSession(sessionId)
+      await getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId)).abortSession(sessionId)
     } catch (error) {
       console.error("[session-actions] ACP abort failed", error)
     }
@@ -2322,7 +2290,7 @@ export async function respondToPermission(
   await waitForConnectionOrThrow()
   if (isAcpSession(sessionId)) {
     // ACP permissions travel over the ACP connection, not OpenCode.
-    if (await getActiveAgentClient().replyToPermission?.(sessionId, requestId, response) !== true) {
+    if (await getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId)).replyToPermission?.(sessionId, requestId, response) !== true) {
       throw new Error("Permission reply failed")
     }
     return
@@ -2344,7 +2312,7 @@ export async function dismissPermission(
   if (isAcpSession(sessionId)) {
     // ACP permissions travel over the ACP connection, not OpenCode. A request
     // already resolved by the agent is treated as dismissed by the client.
-    if (await getActiveAgentClient().replyToPermission?.(sessionId, requestId, "reject") !== true) {
+    if (await getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId)).replyToPermission?.(sessionId, requestId, "reject") !== true) {
       throw new Error("Permission dismissal failed")
     }
     return
