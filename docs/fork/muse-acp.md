@@ -29,6 +29,10 @@ session on that host. The executable path belongs to the server, not the phone.
 Model selection appears when the agent advertises model options. Permission
 cards are driven by ACP requests; an agent configured to allow all tools will
 not ask. Cancelling a turn acts only on the selected session's owning host.
+Muse reports reminder child-session completion as another `tool_call` snapshot
+with the same ID. The translator applies its completed/failed status to the
+existing card; it does not start a second tool or leave a completed reminder
+running. Ordinary `tool_call_update` output remains incremental.
 
 The opt-in HTTP/SSE acceptance script creates a new session on a running test
 server and sends a short prompt; do not aim it at an unrelated active agent:
