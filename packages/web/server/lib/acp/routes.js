@@ -451,7 +451,11 @@ export function registerAcpRoutes(app, options = {}) {
     if (agentId && agentId !== activeConfig?.agentId) return json(res, 409, { error: 'ACP backend owner changed; reconnect the owning agent' });
     const sessionId = req.body?.sessionID ?? req.body?.sessionId ?? req.query?.sessionID;
     if (sessionId && !hasAcpSession(sessionId)) return json(res, 404, { error: 'Unknown ACP session owner' });
-    if (sessionId && !await assertUnambiguousSession(sessionId, res)) return res;
+    // Explicit controls already name the ACP agent/session and the route
+    // checks the active turn/request. An OpenCode outage must not block Stop
+    // or a pending permission on an independently running ACP turn.
+    const explicitControl = agentId && sessionId && ['/cancel', '/permission'].includes(req.path);
+    if (sessionId && !explicitControl && !await assertUnambiguousSession(sessionId, res)) return res;
     return next();
   });
   const setSessionStatus = options.setSessionStatus;

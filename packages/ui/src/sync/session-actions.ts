@@ -2287,7 +2287,6 @@ export async function respondToPermission(
   response: "once" | "always" | "reject",
   directoryOverride?: string,
 ): Promise<void> {
-  await waitForConnectionOrThrow()
   if (isAcpSession(sessionId)) {
     // ACP permissions travel over the ACP connection, not OpenCode.
     if (await getSessionAgentClient(useGlobalSessionsStore.getState().entityById.get(sessionId)).replyToPermission?.(sessionId, requestId, response) !== true) {
@@ -2295,6 +2294,7 @@ export async function respondToPermission(
     }
     return
   }
+  await waitForConnectionOrThrow()
   const directory = directoryOverride
     || resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
@@ -2308,7 +2308,6 @@ export async function dismissPermission(
   sessionId: string,
   requestId: string,
 ): Promise<void> {
-  await waitForConnectionOrThrow()
   if (isAcpSession(sessionId)) {
     // ACP permissions travel over the ACP connection, not OpenCode. A request
     // already resolved by the agent is treated as dismissed by the client.
@@ -2317,6 +2316,7 @@ export async function dismissPermission(
     }
     return
   }
+  await waitForConnectionOrThrow()
   const directory = resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()

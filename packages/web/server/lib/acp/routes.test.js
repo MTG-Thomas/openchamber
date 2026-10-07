@@ -565,3 +565,24 @@ describe('ACP prompt routing, agent identity, start races and delete', () => {
     expect(result.statusCode).toBe(503);
   });
 });
+
+
+it('keeps explicitly owned ACP controls available during an OpenCode outage', async () => {
+  let offline = false;
+  const app = express();
+  registerAcpRoutes(app, { globalMessageStreamHub: captureHub(), openCodeSessionExists: async () => {
+    if (offline) throw new Error('OpenCode unavailable');
+    return false;
+  } });
+  const init = await request(app, 'post', '/api/agent/acp/initialize', {
+    command: process.execPath, args: [mockAgentPath], agentId: 'mock',
+  });
+  expect(init.statusCode).toBe(200);
+  offline = true;
+  expect((await request(app, 'post', '/api/agent/acp/session/cancel', {
+    agentId: 'mock', sessionID: init.body.sessionID,
+  })).statusCode).toBe(200);
+  expect((await request(app, 'post', '/api/agent/acp/session/cancel', {
+    agentId: 'obsolete', sessionID: init.body.sessionID,
+  })).statusCode).toBe(409);
+});
